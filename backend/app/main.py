@@ -2,18 +2,43 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import auth
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Phase B: DB + Redis + MQ init
+    # 尝试连接 Redis（开发环境可能未安装，容错降级）
+    try:
+        from app.core.redis import init_redis
+        await init_redis()
+    except Exception:
+        pass
+
+    # 尝试连接 RabbitMQ
+    try:
+        from app.core.rabbitmq import init_rabbitmq
+        await init_rabbitmq()
+    except Exception:
+        pass
+
     yield
-    # Phase B: resource cleanup
+
+    try:
+        from app.core.redis import close_redis
+        await close_redis()
+    except Exception:
+        pass
+
+    try:
+        from app.core.rabbitmq import close_rabbitmq
+        await close_rabbitmq()
+    except Exception:
+        pass
 
 
 app = FastAPI(
     title="Q宠乐斗 API",
-    description="前后端分离重构 v5.0 — 接口契约",
+    description="前后端分离重构 v5.0",
     version="5.0.0",
     lifespan=lifespan,
 )
@@ -25,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册路由
+app.include_router(auth.router)
 
 
 @app.get("/api/version", response_model=dict)
