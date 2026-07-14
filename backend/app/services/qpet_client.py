@@ -257,6 +257,25 @@ class QPetClient:
     async def farm_get_ad_status(self): return await self.api_call("GET", "/farm/ad-bonus/status")
     async def farm_claim_ad(self): return await self.api_call("POST", "/farm/ad-bonus/claim")
 
+    # ——— Farm 翻地 ———
+    async def farm_explore_all(self): return await self.api_call("POST", "/farm/actions/explore-all")
+    async def farm_explore(self, slot: int): return await self.api_call("POST", f"/farm/slots/{slot}/explore")
+    async def farm_explore_friend(self, friend_id, slot: int): return await self.api_call("POST", f"/farm/friend/{friend_id}/slots/{slot}/explore")
+
+    # ——— Farm 土地升级 ———
+    async def farm_upgrade_land(self, slot: int): return await self.api_call("POST", f"/farm/slots/{slot}/upgrade-land")
+
+    # ——— Farm 批量操作 ———
+    async def farm_plant_all(self, crop_id: str): return await self.api_call("POST", "/farm/actions/plant-all", {"cropId": crop_id})
+    async def farm_double_exp_all(self): return await self.api_call("POST", "/farm/actions/double-exp-all")
+    async def farm_protect_all(self): return await self.api_call("POST", "/farm/actions/protect-all")
+    async def farm_remove_all(self): return await self.api_call("POST", "/farm/actions/remove-all")
+    async def farm_accelerate_all(self): return await self.api_call("POST", "/farm/actions/accelerate-all")
+
+    # ——— Farm 查询 ———
+    async def farm_get_steal_log(self, page: int = 1, limit: int = 30): return await self.api_call("GET", f"/farm/steal-log?page={page}&limit={limit}")
+    async def farm_get_steal_rank(self, limit: int = 20): return await self.api_call("GET", f"/farm/steal-rank?limit={limit}")
+
     # ——— Community API ———
     async def community_get_ad_status(self): return await self.api_call("GET", "/community/ad-reward/status")
     async def community_claim_ad(self): return await self.api_call("POST", "/community/ad-reward/claim")

@@ -66,6 +66,10 @@ class FarmDetail(BaseModel):
     today_harvest_exp: int = 0
     experience: int = 0
     level: int = 0
+    museum: dict = {}
+    exploration_status: dict = {}
+    land_levels: list[dict] = []
+    pet_guard_info: dict | None = None
 
 
 class SSOData(BaseModel):

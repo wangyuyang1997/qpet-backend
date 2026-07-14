@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 # 重登互斥锁（防止并发重登）
 _relogin_locks: dict[str, bool] = {}
+# 全局管理器注册表
+_managers: dict[str, "AccountManager"] = {}
+
+
+def get_manager(account_id: str) -> "AccountManager | None":
+    return _managers.get(account_id)
 
 
 def generate_account_id(token: str) -> str:
@@ -112,11 +118,13 @@ class AccountManager:
 
         self.running = True
         await self._save_running(1)
+        _managers[self.id] = self
         return True
 
     async def stop(self):
         """停止账号引擎"""
         self.running = False
+        _managers.pop(self.id, None)
         await self._save_running(0)
 
     # ——— 重登 ———
