@@ -213,3 +213,28 @@ class AccountManager:
             .where(Account.user_id > 0, Account.id != self.id)
         )
         return [{"id": r[0], "nickname": r[1], "user_id": r[2]} for r in result.fetchall()]
+
+
+async def list_accounts(db: AsyncSession) -> list[dict]:
+    """返回所有账号摘要（供 Dashboard API 使用）"""
+    from app.services.engine import _engines
+    result = await db.execute(select(Account))
+    rows = result.scalars().all()
+    accounts = []
+    for row in rows:
+        engine = _engines.get(row.id)
+        accounts.append({
+            "id": row.id,
+            "name": row.nickname or row.id[:8],
+            "level": row.level,
+            "class_name": row.class_name,
+            "running": engine._running if engine else False,
+            "user_id": row.user_id,
+            "has_credentials": bool(row.username and row.password),
+            "is_premium": bool(row.is_premium),
+            "premium_expires_at": str(row.premium_expires_at) if row.premium_expires_at else None,
+            "today_exp_gained": 0,
+            "stats": {},
+            "farm_stats": {},
+        })
+    return accounts

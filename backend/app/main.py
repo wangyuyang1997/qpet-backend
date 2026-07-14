@@ -63,6 +63,11 @@ async def get_version():
     return {"version": f"v5.0-{datetime.now().strftime('%Y%m%d%H%M')}"}
 
 
+@app.get("/api/logs/stats")
+async def get_logs_stats():
+    return {"success": True, "data": {"total": 0, "today": 0}}
+
+
 @app.get("/api/status")
 async def get_status():
     from app.services.engine import _engines
