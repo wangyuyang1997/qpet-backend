@@ -50,6 +50,27 @@ def get_engine(account_id: str):
     return _engines.get(account_id)
 
 
+async def get_or_create_engine(account_id: str) -> "GameEngine | None":
+    """获取已有引擎，不存在则从数据库加载创建"""
+    if account_id in _engines:
+        return _engines[account_id]
+    from app.core.database import AsyncSessionLocal
+    # Create a long-lived session for the engine
+    db = AsyncSessionLocal()
+    try:
+        mgr = AccountManager(account_id, db)
+        try:
+            await mgr.load_from_db()
+        except ValueError:
+            await db.close()
+            return None
+        engine = GameEngine(mgr, db)
+        return engine
+    except Exception:
+        await db.close()
+        raise
+
+
 class GameEngine:
     """单个游戏账号的自动化引擎"""
 
@@ -181,6 +202,10 @@ class GameEngine:
         self._tasks.clear()
 
         await self.mgr.stop()
+        try:
+            await self.db.close()
+        except Exception:
+            pass
         logger.info(f"[{self.account_id}] 引擎已停止")
 
     # ——— 初始化 ———
@@ -261,6 +286,63 @@ class GameEngine:
 
         elapsed = time.time() - start_time
         logger.info(f"[{self.account_id}] 主循环完成 ({elapsed:.1f}s)")
+        await self._persist_daily()
+
+    async def _persist_daily(self):
+        """将当前角色快照 + 关键计数写入 daily_records"""
+        from datetime import date
+        from sqlalchemy.dialects.postgresql import insert
+        from app.models.daily_record import DailyRecord
+
+        char = self._character_cache
+        if not char:
+            return
+
+        today = date.today()
+        # Gather available status data
+        tower_status = {}
+        gang_boss_status = {}
+        farm_status = {}
+        try:
+            tower_status = await self.tower.get_status() or {}
+            gang_boss_status = await self.gang.get_boss_status() or {}
+            farm_status = await self.farm_status.get() or {}
+        except Exception:
+            pass
+
+        vals = {
+            "account_id": self.account_id,
+            "date": today,
+            "level": char.get("level", 0),
+            "class_name": char.get("className", ""),
+            "combat_power": char.get("combatPower", 0),
+            "current_exp": char.get("experience", 0),
+            "level_exp": char.get("exp", 0),
+            "level_exp_max": char.get("expToNext", 0),
+            "stamina": char.get("stamina", 0),
+            "max_stamina": char.get("max_stamina") or char.get("maxStamina", 0),
+            # Incremental counters — these accumulate per service call
+            "npc_fights": getattr(self.npc, "today_count", 0) if self.npc else 0,
+            "friend_fights": getattr(self.friend_battle, "today_count", 0) if self.friend_battle else 0,
+            "tower_floors": tower_status.get("todayFloors", 0),
+            "tower_max": tower_status.get("maxFloor", 0),
+            "gang_contribution": gang_boss_status.get("todayContribution", 0),
+            "harvests": farm_status.get("todayHarvests", 0),
+            "steals": farm_status.get("todaySteals", 0),
+            "digs": farm_status.get("todayDigs", 0),
+            "stamina_ads": getattr(self.ad_stamina, "today_count", 0) if self.ad_stamina else 0,
+            "community_ads": getattr(self.ad_community, "today_count", 0) if self.ad_community else 0,
+        }
+
+        stmt = insert(DailyRecord).values(**vals).on_conflict_do_update(
+            index_elements=["account_id", "date"],
+            set_=vals,
+        )
+        try:
+            await self.db.execute(stmt)
+            await self.db.commit()
+        except Exception as e:
+            logger.error(f"[{self.account_id}] daily_record 写入失败: {e}")
 
     # ——— 子循环 ———
 

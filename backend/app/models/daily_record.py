@@ -41,4 +41,6 @@ class DailyRecord(Base):
     max_stamina: Mapped[int] = mapped_column(Integer, default=0)
     level_exp: Mapped[int] = mapped_column(Integer, default=0)
     level_exp_max: Mapped[int] = mapped_column(Integer, default=0)
+    gang_contribution: Mapped[int] = mapped_column(Integer, default=0)
+    abyss_tickets: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -19,11 +19,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="请先登录")
 
     session = await session_get(token)
-    # 开发模式降级：Redis 不可用时接受任意 token
     if session is None:
-        from app.core.redis import _client
-        if _client is None:
-            return {"userId": 1, "username": "dev", "role": "admin", "accountIds": []}
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
 
     await session_extend(token)

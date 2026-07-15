@@ -1,10 +1,12 @@
 """账号数据 API — 透传游戏 API 原始数据给 Dashboard 前端"""
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.core.database import get_db
 from app.core.auth_middleware import get_current_user
 from app.services.account_manager import list_accounts as get_all_accounts
-from app.services.engine import get_engine
+from app.services.engine import get_engine, get_or_create_engine
+from app.models.user import User, UserAccount
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -12,9 +14,23 @@ router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 @router.get("")
 async def list_accounts(
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
 ):
     accounts = await get_all_accounts(db)
+
+    # Filter by user: admin sees all, regular users see only their bound accounts
+    role = user.get("role") or user.get("role")
+    if user and role != "admin":
+        user_id = user.get("user_id") or user.get("userId")
+        account_ids = user.get("account_ids") or user.get("accountIds") or []
+        bound_ids = set(account_ids)
+        if user_id:
+            result = await db.execute(
+                select(UserAccount.account_id).where(UserAccount.user_id == user_id)
+            )
+            bound_ids |= {row[0] for row in result.fetchall()}
+        accounts = [a for a in accounts if a["id"] in bound_ids]
+
     return {"success": True, "data": accounts}
 
 
@@ -57,20 +73,22 @@ async def get_account_sso(account_id: str, _user: dict = Depends(get_current_use
 
 @router.post("/{account_id}/start")
 async def start_account(account_id: str, _user: dict = Depends(get_current_user)):
-    engine = get_engine(account_id)
-    if engine:
-        await engine.start()
-        return {"success": True}
-    return {"success": False, "message": "引擎不存在"}
+    engine = await get_or_create_engine(account_id)
+    if not engine:
+        return {"success": False, "message": "账号不存在"}
+    if engine._running:
+        return {"success": True, "message": "已在运行中"}
+    await engine.start()
+    return {"success": True, "message": "引擎已启动"}
 
 
 @router.post("/{account_id}/stop")
 async def stop_account(account_id: str, _user: dict = Depends(get_current_user)):
     engine = get_engine(account_id)
-    if engine:
-        await engine.stop()
-        return {"success": True}
-    return {"success": False, "message": "引擎不存在"}
+    if not engine or not engine._running:
+        return {"success": False, "message": "引擎未运行"}
+    await engine.stop()
+    return {"success": True, "message": "引擎已停止"}
 
 
 @router.post("/{account_id}/{action}")

@@ -142,7 +142,7 @@ class AccountManager:
         async with httpx.AsyncClient(timeout=30) as http:
             resp = await http.post(
                 f"https://api.duanwuqiufenmao.top/api/auth/login",
-                json={"login": self.username, "password": password},
+                json={"username": self.username, "password": password},
             )
             data = resp.json() if resp.status_code == 200 else {}
 

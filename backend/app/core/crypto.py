@@ -4,6 +4,7 @@ import os
 import base64
 import hashlib
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.config import settings
@@ -45,8 +46,11 @@ def import_private_key(jwk: dict) -> ec.EllipticCurvePrivateKey:
 
 
 def ecdsa_sign(private_key: ec.EllipticCurvePrivateKey, message: str) -> str:
-    sig = private_key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))
-    return _b64url(sig)
+    """ECDSA 签名 — DER → raw(r||s) → base64url，对齐 Web Crypto API 输出"""
+    sig_der = private_key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(sig_der)
+    sig_raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return _b64url(sig_raw)
 
 
 def _b64url(data: bytes) -> str:
@@ -93,11 +97,25 @@ def encrypt_password(plaintext: str) -> str:
 
 
 def decrypt_password(cipher_b64: str) -> str:
+    if not cipher_b64:
+        return ""
     try:
         key = _derive_aes_key()
         aesgcm = AESGCM(key)
         raw = base64.b64decode(cipher_b64)
-        nonce, ct = raw[:12], raw[12:]
-        return aesgcm.decrypt(nonce, ct, None).decode()
+        # Try Python format: nonce[12] + ct[includes 16-byte tag]
+        try:
+            return aesgcm.decrypt(raw[:12], raw[12:], None).decode()
+        except Exception:
+            pass
+        # Try Node.js format: iv[12] + tag[16] + ciphertext
+        try:
+            nonce = raw[:12]
+            tag = raw[12:28]
+            ct = raw[28:]
+            return aesgcm.decrypt(nonce, ct + tag, None).decode()
+        except Exception:
+            pass
+        return ""
     except Exception:
         return ""
