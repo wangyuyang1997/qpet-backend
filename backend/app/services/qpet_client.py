@@ -96,6 +96,12 @@ class QPetClient:
         nonce = _random_nonce(16)
         client_request_id = str(uuid.uuid4())
 
+        # 注入 clientRequestId（必须在签名前，验签时服务端也会包含此参数）
+        if method.upper() == "GET":
+            params["clientRequestId"] = client_request_id
+        else:
+            body["clientRequestId"] = client_request_id
+
         # 签名
         param_str = _build_sorted_params(body, params)
         sig_path = "/api" + path.split("?")[0].rstrip("/") or "/api"
@@ -115,12 +121,6 @@ class QPetClient:
         if method.upper() != "GET":
             headers["Content-Type"] = "application/json"
 
-        # 注入 clientRequestId
-        if method.upper() == "GET":
-            params["clientRequestId"] = client_request_id
-        else:
-            body["clientRequestId"] = client_request_id
-
         url = settings.game_api_base_url + path
 
         try:
@@ -139,9 +139,7 @@ class QPetClient:
                     return {"success": False, "rateLimited": True, "message": "请求过于频繁"}
 
                 if resp.status_code == 401:
-                    if self.on_auth_failure:
-                        await self.on_auth_failure(self.account_id)
-                    return {"success": False, "rateLimited": True, "message": "认证失败"}
+                    return {"success": False, "message": "认证失败"}
 
                 try:
                     data = resp.json()

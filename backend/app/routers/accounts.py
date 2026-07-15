@@ -78,7 +78,9 @@ async def start_account(account_id: str, _user: dict = Depends(get_current_user)
         return {"success": False, "message": "账号不存在"}
     if engine._running:
         return {"success": True, "message": "已在运行中"}
-    await engine.start()
+    ok = await engine.start()
+    if not ok:
+        return {"success": False, "message": "引擎启动失败，请检查账号凭证是否有效"}
     return {"success": True, "message": "引擎已启动"}
 
 

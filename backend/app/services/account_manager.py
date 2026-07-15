@@ -1,4 +1,5 @@
 """账号管理器 — 多账号生命周期、启停、重登、ECDSA 管理"""
+import asyncio
 import hashlib
 import logging
 from typing import Callable, Optional
@@ -71,45 +72,27 @@ class AccountManager:
         )
 
     async def start(self) -> bool:
-        """启动账号引擎"""
-        if self.running:
+        await self.load_from_db()
+        if not self.username or not self.password_encrypted:
+            logger.error(f"[{self.id}] 无账密，无法启动")
             return False
 
-        await self.load_from_db()
-
-        # ECDSA 就绪检查
-        ready = await self.client.ensure_ecdsa_ready()
-        if not ready:
-            # 如果有账密，尝试重登
-            if self.username and self.password_encrypted:
-                ok = await self.relogin()
-                if ok:
-                    ready = await self.client.init_ecdsa()
-            if not ready:
-                logger.error(f"[{self.id}] ECDSA 初始化失败")
-                return False
+        # 强制重登 + 全新ECDSA
+        if not await self.relogin():
+            logger.error(f"[{self.id}] 重登失败")
+            return False
+        self.client.delete_key()
+        await asyncio.sleep(1)
+        if not await self.client.init_ecdsa():
+            logger.error(f"[{self.id}] ECDSA初始化失败")
+            return False
 
         # 测试连接
         result = await self.client.get_character()
         if not result.get("success"):
-            msg = result.get("message", "")
-            if "SIGNING_KEY_NOT_REGISTERED" in msg:
-                self.client.delete_key()
-                await self.client.init_ecdsa()
-                result = await self.client.get_character()
+            logger.error(f"[{self.id}] 无法连接: {result.get('message')}")
+            return False
 
-            if not result.get("success"):
-                # 尝试重登
-                if self.username and self.password_encrypted:
-                    if await self.relogin():
-                        await self.client.init_ecdsa()
-                        result = await self.client.get_character()
-
-                if not result.get("success"):
-                    logger.error(f"[{self.id}] 无法连接: {result.get('message')}")
-                    return False
-
-        # 更新角色信息
         data = result.get("data", {})
         if data:
             self.nickname = data.get("nickname", "")
@@ -168,17 +151,16 @@ class AccountManager:
             return
         _relogin_locks[account_id] = True
         try:
-            self.running = False
             if self.username and self.password_encrypted:
                 ok = await self.relogin()
                 if ok:
                     await self.client.ensure_ecdsa_ready()
-                    self.running = True
+                    await asyncio.sleep(1)
                     logger.info(f"[{self.id}] 重登成功")
                 else:
-                    logger.error(f"[{self.id}] 重登失败，已停止")
+                    logger.error(f"[{self.id}] 重登失败")
             else:
-                logger.error(f"[{self.id}] 认证失败且无账密，已停止")
+                logger.warning(f"[{self.id}] 无账密，无法自动重登")
         finally:
             _relogin_locks[account_id] = False
 

@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI):
             engine = await get_or_create_engine(aid)
             if engine:
                 await engine.start()
-                print(f"[startup] 恢复引擎: {aid}")
+                logger.info(f"恢复引擎: {aid}")
     except Exception as e:
-        print(f"[startup] 恢复引擎失败: {e}")
+        logger.warning(f"恢复引擎失败: {e}")
 
     yield
 
