@@ -47,12 +47,17 @@ class GangBoss:
                 if ok:
                     used += 1
 
-        # 挑战书：只用在最高等级BOSS上
+        # 挑战书：用在最高等级BOSS上，一次循环用多本（每日上限15次）
         top_boss = unlocked[-1]
-        if await self._supply.ensure("challenge_book", 0):
+        daily_limit = data.get("dailyLimit", 15)
+        remaining = daily_limit - (data.get("todayCount", 0) or 0) - used
+        while remaining > 0 and await self._supply.ensure("challenge_book", 0):
             ok = await self._do_boss(top_boss.get("id"))
             if ok:
                 used += 1
+                remaining -= 1
+            else:
+                break  # prepare/settle失败，不再继续
 
         if used:
             info("乐斗", "帮派BOSS", f"帮派BOSS完成: {used}次, 最高BOSS={top_boss.get('name', top_boss.get('id'))}", self._account_id)

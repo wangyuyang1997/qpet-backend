@@ -1,9 +1,10 @@
 """道具补给 — 根据配置阈值自动从背包移入库存"""
 import logging
+from datetime import date
 from app.services.qpet_client import QPetClient
 from app.services.inventory import Inventory
 from app.services.config_service import ConfigService
-from app.core.logger import info, warn
+from app.core.logger import info
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +25,17 @@ class ItemSupply:
         self._config = config_svc
         self._account_id = account_id
         self.challenge_used = 0
+        self._failed: dict[str, str] = {}  # item_key → date
 
     async def ensure(self, item_key: str, current_stock: int, threshold: int = 0) -> bool:
         """
         检查开关 → 比较库存 → 从背包移入
         返回 True 表示执行了补给
         """
+        today = date.today().isoformat()
+        if self._failed.get(item_key) == today:
+            return False
+
         rule = SUPPLY_CONFIG.get(item_key)
         if not rule:
             logger.warning(f"未知补给项: {item_key}")
@@ -44,10 +50,11 @@ class ItemSupply:
 
         result = await self._inventory.use_by_name(rule["name"])
         if result and result.get("success"):
+            self._failed.pop(item_key, None)
             info("乐斗", "补给", f"补给 {rule['name']} 成功", self._account_id)
             if item_key == "challenge_book":
                 self.challenge_used += 1
             return True
 
-        warn("乐斗", "补给", f"补给失败: {rule['name']} (背包不足或API失败)", self._account_id)
+        self._failed[item_key] = today
         return False

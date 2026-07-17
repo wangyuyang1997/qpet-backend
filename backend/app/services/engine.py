@@ -241,6 +241,9 @@ class GameEngine:
             else:
                 warn("系统", "引擎", "初始化获取角色信息失败", self.account_id)
 
+            # 从 daily_records 恢复今日已完成状态，重启不丢
+            await self._restore_daily_state()
+
             await self._run_marriage()
 
             async def retry():
@@ -307,7 +310,7 @@ class GameEngine:
         exp = self._character_cache.get("experience", 0)
         is_premium = self._character_cache.get("isPremium", False)
 
-        await self.exp_boost.ensure()
+        await self.exp_boost.ensure()  # 经验药水，用完才补
         await self.supply.ensure("revive", 0)
         await self.supply.ensure("challenge_book", 0)
 
@@ -460,6 +463,30 @@ class GameEngine:
             warn("系统", "引擎", f"获取偷菜计数失败: {e}", self.account_id)
         return 0
 
+    async def _restore_daily_state(self):
+        """从 daily_records 恢复今天已完成的一次性操作状态"""
+        try:
+            from datetime import date
+            from sqlalchemy import select
+            from app.models.daily_record import DailyRecord
+            today = date.today()
+            r = await self.db.execute(
+                select(DailyRecord).where(
+                    DailyRecord.account_id == self.account_id,
+                    DailyRecord.date == today,
+                )
+            )
+            row = r.scalar_one_or_none()
+            if row:
+                if row.checkin_done and self.checkin:
+                    self.checkin._done_date = today.isoformat()
+                if row.chest_done and self.chest:
+                    self.chest._done_date = today.isoformat()
+                if row.exp_boost_checked and self.exp_boost:
+                    self.exp_boost._failed_date = today.isoformat()
+        except Exception:
+            pass
+
     async def _persist_daily(self):
         """将当前角色快照 + 关键计数写入 daily_records"""
         from datetime import date
@@ -510,6 +537,11 @@ class GameEngine:
             "challenge_books": getattr(self.shop_special, "today_count", 0) if self.shop_special else 0,
             "today_harvest_exp": farm_status.get("todayHarvestExp", 0),
             "exp_battle": getattr(self.npc, "today_exp", 0) if self.npc else 0,
+            # 每日一次性操作完成标记
+            "checkin_done": getattr(self.checkin, "_done_date", "") == today.isoformat() and 1 or 0,
+            "chest_done": getattr(self.chest, "_done_date", "") == today.isoformat() and 1 or 0,
+            "supply_checked": getattr(self.supply, "_failed", {}) and 1 or 0,
+            "exp_boost_checked": getattr(self.exp_boost, "_failed_date", "") == today.isoformat() and 1 or 0,
         }
 
         # 角色快照（仅在 character_cache 有效时写入，防止脏覆盖）
@@ -574,7 +606,10 @@ class GameEngine:
                     continue
                 if not self._is_rate_limited():
                     result = await self.npc.fight_one()
-                    await asyncio.sleep(3 if result.get("ok") else 10)
+                    if result.get("no_stamina"):
+                        await asyncio.sleep(300)  # 体力不足，等5分钟
+                    else:
+                        await asyncio.sleep(3 if result.get("ok") else 10)
                 else:
                     await asyncio.sleep(30)
             except Exception as e:
@@ -730,7 +765,9 @@ class GameEngine:
             log_error("系统", "引擎", f"农场异常: {e}", self.account_id)
 
     async def _run_farm_social(self):
-        """社交：翻地+偷菜+帮浇水。对齐旧引擎 autoSteal() + autoHelpFriends()"""
+        """社交：翻地+偷菜+帮浇水。对齐旧引擎 autoSteal() + autoHelpFriends()
+        旧代码遍历好友列表直到找到可偷/可浇的，而非固定第一个。
+        """
         try:
             friends = await self.client.get_fightable_friends()
             if not friends.get("success"):
@@ -739,19 +776,41 @@ class GameEngine:
             if not friends.get("data"):
                 return
             friend_list = friends["data"]
-            for f in friend_list[:1]:  # 只处理第一个好友
+
+            stolen_total = 0
+            dug_total = 0
+            watered_count = 0
+
+            for f in friend_list:
                 fid = f.get("user_id") or f.get("userId")
                 if not fid:
                     continue
-                info("农场", "社交", f"访问好友 {fid}", self.account_id)
-                # 翻地（翻别人的跟翻自己没区别，对方研究点/图鉴不涨）
+
+                # 翻地
                 dug = await self.farm_dig.dig_friend(fid)
                 if dug:
-                    info("农场", "社交", f"翻好友{fid}的地: {dug}块", self.account_id)
-                stolen = await self.farm_steal.run(fid)
-                await self.farm_care.water_friend(fid)
-                if stolen > 0:
-                    await self._persist_steals()
-                info("农场", "社交", f"好友{fid}: 翻地{dug}块 偷菜{stolen}次 (共{len(friend_list)}位好友)", self.account_id)
+                    dug_total += dug
+
+                # 偷菜（最多2块，对齐旧代码）
+                if stolen_total < 2:
+                    stolen = await self.farm_steal.run(fid)
+                    if stolen:
+                        stolen_total += stolen
+                        await self._persist_steals()
+
+                # 帮浇水（最多3次，对齐旧代码）
+                if watered_count < 3:
+                    w = await self.farm_care.water_friend(fid)
+                    if w:
+                        watered_count += w
+
+                if stolen_total >= 2 and watered_count >= 3:
+                    break
+
+            if stolen_total or dug_total or watered_count:
+                info("农场", "社交",
+                     f"社交完成: 翻地{dug_total}块 偷菜{stolen_total}次 浇水{watered_count}次 (共{len(friend_list)}位好友)",
+                     self.account_id)
+
         except Exception as e:
             log_error("系统", "引擎", f"社交异常: {e}", self.account_id)

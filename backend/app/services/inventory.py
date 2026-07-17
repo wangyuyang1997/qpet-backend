@@ -67,7 +67,7 @@ class Inventory:
             qty = item.get("quantity", 0)
             if qty <= 0:
                 continue
-            item_name = item.get("name", "") or item.get("itemName", "")
+            item_name = item.get("item_name", "") or item.get("name", "") or item.get("itemName", "")
             if name_lower in item_name.lower():
                 return item
         return None
@@ -97,8 +97,8 @@ class Inventory:
         item = await self.find_by_name(name)
         if not item:
             return None
-        item_type = item.get("type") or item.get("itemType", "")
-        item_id = item.get("id") or item.get("itemId", "")
+        item_type = item.get("item_type") or item.get("type") or item.get("itemType", "")
+        item_id = item.get("item_id") or item.get("id") or item.get("itemId", "")
         item_qty = item.get("quantity", 1)
         qty = min(max_qty, item_qty) if max_qty > 0 else item_qty
         return await self.use_item(item_type, item_id, qty)

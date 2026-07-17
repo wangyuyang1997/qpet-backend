@@ -169,8 +169,8 @@ async def get_account_sso(account_id: str, _user: dict = Depends(get_current_use
 
     jwk = getattr(engine.client, '_ecdsa_jwk', None)
     if not jwk and engine.client.private_key:
-        from app.core.crypto import export_public_jwk
-        engine.client._ecdsa_jwk = export_public_jwk(engine.client.private_key)
+        from app.core.crypto import export_private_jwk
+        engine.client._ecdsa_jwk = export_private_jwk(engine.client.private_key)
         jwk = engine.client._ecdsa_jwk
 
     return {"success": True, "data": {

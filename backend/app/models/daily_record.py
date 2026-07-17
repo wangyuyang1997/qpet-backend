@@ -44,4 +44,8 @@ class DailyRecord(Base):
     abyss_tickets: Mapped[int] = mapped_column(Integer, default=0)
     challenge_books: Mapped[int] = mapped_column(Integer, default=0)
     flowers_sent: Mapped[int] = mapped_column(Integer, default=0)
+    checkin_done: Mapped[int] = mapped_column(Integer, default=0)
+    chest_done: Mapped[int] = mapped_column(Integer, default=0)
+    supply_checked: Mapped[int] = mapped_column(Integer, default=0)  # bitmask: 1=revive,2=challenge_book,4=flowers,8=beads
+    exp_boost_checked: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

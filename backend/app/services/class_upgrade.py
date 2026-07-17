@@ -22,18 +22,7 @@ class ClassUpgrade:
 
         data = info.get("data", {})
 
-        # 选择职业
-        if not data.get("className"):
-            guide = await self._client.get_class_guide()
-            classes = guide.get("data", []) or []
-            if classes:
-                cls = classes[0]
-                result = await self._client.select_class(cls.get("id"))
-                if result.get("success"):
-                    results["selected"] = True
-                    log_action("乐斗", "修炼", f"选择职业: {cls.get('name')}", self._account_id)
-                else:
-                    warn("乐斗", "修炼", f"选择职业失败: {cls.get('name')}", self._account_id)
+        # 不自动选职业 — 用户手动选
 
         # 分配技能
         tree = await self._client.get_skill_tree()

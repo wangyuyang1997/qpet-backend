@@ -51,7 +51,7 @@ class QPetClient:
         if jwk:
             try:
                 self.private_key = import_private_key(jwk)
-                self._ecdsa_jwk = export_public_jwk(self.private_key)
+                self._ecdsa_jwk = export_private_jwk(self.private_key)
                 self._ready = True
                 return True
             except Exception:
@@ -72,7 +72,7 @@ class QPetClient:
             store[self.account_id] = priv_jwk
             save_key_store(store)
             self.private_key = key
-            self._ecdsa_jwk = pub_jwk
+            self._ecdsa_jwk = priv_jwk
             self._ready = True
             return True
 

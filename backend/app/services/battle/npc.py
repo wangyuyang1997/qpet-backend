@@ -17,8 +17,11 @@ class NpcBattle:
     async def fight_one(self) -> dict:
         result = await self._client.fight_npc()
         if not result.get("success"):
-            warn("乐斗", "NPC乐斗", f"NPC准备失败: {result.get('message', '')}", self._account_id)
-            return {"ok": False, "reason": result.get("message", "") or "prepare失败"}
+            msg = result.get("message", "")
+            if "体力" in msg or "stamina" in msg:
+                return {"ok": False, "reason": msg, "no_stamina": True}
+            warn("乐斗", "NPC乐斗", f"NPC准备失败: {msg}", self._account_id)
+            return {"ok": False, "reason": msg or "prepare失败"}
 
         data = result.get("data", {}) or {}
         battle_token = data.get("battleToken", "")

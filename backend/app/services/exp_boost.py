@@ -1,9 +1,10 @@
 """经验药水 BUFF — 检查角色经验加成，不足时从背包补充"""
 import logging
+from datetime import date
 from app.services.qpet_client import QPetClient
 from app.services.inventory import Inventory
 from app.services.config_service import ConfigService
-from app.core.logger import info, warn
+from app.core.logger import info
 
 logger = logging.getLogger(__name__)
 
@@ -16,27 +17,34 @@ class ExpBoost:
         self._inventory = inventory
         self._config = config_svc
         self._account_id = account_id
+        self._failed_date: str = ""
 
-    async def ensure(self, threshold: int = 5) -> bool:
-        """经验 BUFF 次数 ≤ threshold 时从背包补充"""
+    async def ensure(self) -> bool:
+        """经验 BUFF 次数用完时从背包补充，优先中瓶再小瓶"""
+        today = date.today().isoformat()
+        if self._failed_date == today:
+            return False
+
         char = await self._client.get_character()
         if not char.get("success"):
-            warn("乐斗", "补给", "获取角色信息失败(经验药水检查)", self._account_id)
             return False
 
         data = char.get("data", {})
+        if data.get("level", 0) >= 100:
+            return False  # 满级不需要经验
         charges = data.get("exp_boost_charges", 0)
-        if charges > threshold:
-            return False
+        if charges > 0:
+            return False  # 上一瓶还没用完
 
         enabled = await self._config.get_bool(self._account_id, "exp_boost_enabled")
         if not enabled:
             return False
 
-        result = await self._inventory.use_by_name("经验")
+        # 优先中瓶，再小瓶
+        result = await self._inventory.use_by_name("中瓶经验") or await self._inventory.use_by_name("小瓶经验")
         if result and result.get("success"):
-            info("乐斗", "补给", f"经验药水补充成功 (剩余{charges}次)", self._account_id)
+            info("乐斗", "补给", "经验药水补充成功", self._account_id)
             return True
 
-        warn("乐斗", "补给", "经验药水补充失败 (背包无药水或API失败)", self._account_id)
+        self._failed_date = today
         return False

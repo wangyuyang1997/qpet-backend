@@ -1,4 +1,5 @@
 """Q宠乐斗 Backend — FastAPI 入口"""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -36,7 +37,7 @@ async def lifespan(app: FastAPI):
         for aid in running_ids:
             engine = await get_or_create_engine(aid)
             if engine:
-                await engine.start()
+                asyncio.create_task(engine.start())
     except Exception as e:
         logger.warning(f"恢复引擎失败: {e}")
 
