@@ -37,7 +37,6 @@ class ConfigUpdateRequest(BaseModel):
 
 class AutomationConfig(BaseModel):
     """22 个功能开关 + 4 个数值参数"""
-    friends: bool = True
     npc_fight: bool = True
     tower: bool = True
     gang_boss: bool = True

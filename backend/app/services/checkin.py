@@ -23,7 +23,8 @@ class Checkin:
 
         post = await self._client.checkin()
         if post.get("success"):
-            logger.info(f"[{self._account_id}] 签到成功")
+            from app.core.logger import action as log_action
+            log_action("乐斗", "日常", "签到成功", self._account_id)
             return True
 
         return False

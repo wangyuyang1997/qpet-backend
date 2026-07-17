@@ -41,13 +41,13 @@ async def main():
         row = r.fetchone()
         if row:
             cols = ["id","account_id","date","level","class_name","combat_power","npc_fights","tower_floors","tower_max",
-                    "friend_fights","harvests","plants","steals","waters","help_waters","farm_ads","stamina_ads",
+                    "harvests","plants","steals","waters","help_waters","farm_ads","stamina_ads",
                     "diversity","coll_crops","coll_slots","exp_visit","current_exp","exp_battle","today_harvest_exp",
                     "stamina","max_stamina","level_exp","level_exp_max","gang_contribution","abyss_tickets","updated_at",
                     "community_ads","digs","land_upgrades","research_points_earned","research_points_spent"]
             print(f"    ✅ 写入成功:")
             for i, c in enumerate(cols):
-                if i >= 3 and row[i] is not None and row[i] != 0:
+                if i >= 3 and i < len(row) and row[i] is not None and row[i] != 0:
                     print(f"       {c}={row[i]}")
         else:
             print("    ❌ 今日无记录")

@@ -1,6 +1,7 @@
 """职业/技能/觉醒"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import action as log_action
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,6 @@ class ClassUpgrade:
         self._account_id = account_id
 
     async def run(self, level: int = 0) -> dict:
-        """返回 {selected, skills_allocated, awakened}"""
         results = {"selected": False, "skills_allocated": 0, "awakened": False}
 
         info = await self._client.get_class_info()
@@ -24,31 +24,31 @@ class ClassUpgrade:
         # 选择职业
         if not data.get("className"):
             guide = await self._client.get_class_guide()
-            classes = guide.get("data", {}).get("available", [])
+            classes = guide.get("data", []) or []
             if classes:
-                result = await self._client.select_class(classes[0].get("id"))
+                cls = classes[0]
+                result = await self._client.select_class(cls.get("id"))
                 if result.get("success"):
                     results["selected"] = True
-                    logger.info(f"[{self._account_id}] 选择职业: {classes[0].get('name')}")
+                    log_action("乐斗", "修炼", f"选择职业: {cls.get('name')}", self._account_id)
 
         # 分配技能
         tree = await self._client.get_skill_tree()
         if tree.get("success"):
-            nodes = tree.get("data", {}).get("nodes", [])
+            nodes = tree.get("data", {}).get("skillTree", [])
             for node in nodes:
                 if node.get("canAllocate", False):
                     result = await self._client.allocate_skill(node.get("id"))
                     if result.get("success"):
                         results["skills_allocated"] += 1
-
-        if results["skills_allocated"]:
-            logger.info(f"[{self._account_id}] 分配技能 {results['skills_allocated']}个")
+                        name = node.get("name", "?")
+                        log_action("乐斗", "修炼", f"分配技能点: {name}", self._account_id)
 
         # 觉醒
         if level >= 40 and data.get("canAwaken", False):
             result = await self._client.awaken_class()
             if result.get("success"):
                 results["awakened"] = True
-                logger.info(f"[{self._account_id}] 职业觉醒成功")
+                log_action("乐斗", "修炼", "职业觉醒成功", self._account_id)
 
         return results

@@ -19,7 +19,7 @@ class FriendSync:
         friends = await self._client.get_friends()
         if not friends.get("success"):
             return 0
-        existing_ids = {f.get("userId") or f.get("id") for f in friends.get("data", {}).get("friends", [])}
+        existing_ids = {f.get("userId") or f.get("id") for f in friends.get("data", []) or []}
 
         # 检查待处理请求
         requests = await self._client.get_friend_requests()

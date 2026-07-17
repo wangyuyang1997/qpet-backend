@@ -35,7 +35,9 @@ class QPetClient:
         self.private_key = None
         self._ready = False
         self.on_auth_failure = on_auth_failure  # async callback for 401
+        self.on_rate_limited = None  # 风控回调
         self._describe_cache = {}  # path → (category, module)
+        self._last_api_call = ""    # 最近一次 API 调用路径，供风控日志使用
 
     # ——— ECDSA 管理 ———
 
@@ -94,6 +96,7 @@ class QPetClient:
 
         timestamp = str(int(time.time() * 1000))
         nonce = _random_nonce(16)
+        self._last_api_call = f"{method} {path}"
         client_request_id = str(uuid.uuid4())
 
         # 注入 clientRequestId（必须在签名前，验签时服务端也会包含此参数）
@@ -136,6 +139,8 @@ class QPetClient:
                     await _async_sleep(delay)
 
                 if resp.status_code == 429:
+                    if self.on_rate_limited:
+                        self.on_rate_limited(self._last_api_call)
                     return {"success": False, "rateLimited": True, "message": "请求过于频繁"}
 
                 if resp.status_code == 401:
@@ -179,10 +184,7 @@ class QPetClient:
     async def get_inventory(self): return await self.api_call("GET", "/qpet/inventory")
     async def use_item(self, item_type: str, item_id: str, quantity: int = 1):
         return await self.api_call("POST", "/qpet/inventory/use", {"itemType": item_type, "itemId": item_id, "quantity": quantity})
-    async def get_fightable_friends(self): return await self.api_call("GET", "/qpet/battle/friends")
-    async def get_friend_character(self, friend_id): return await self.api_call("GET", f"/qpet/battle/friend/{friend_id}")
     async def fight_npc(self): return await self.api_call("POST", "/qpet/battle/prepare", {"isNpc": True})
-    async def fight_player(self, target_user_id): return await self.api_call("POST", "/qpet/battle/prepare", {"isNpc": False, "targetUserId": target_user_id})
     async def settle_battle(self, battle_token: str, atk_won: bool):
         return await self.api_call("POST", "/qpet/battle/settle", {"battleToken": battle_token, "atkWon": atk_won})
     async def get_tower_status(self): return await self.api_call("GET", "/qpet/tower/status")
@@ -221,6 +223,7 @@ class QPetClient:
     async def respond_marriage(self, accept: bool): return await self.api_call("POST", "/qpet/social/marriage/respond", {"accept": accept})
     async def send_friend_flower(self, target_user_id): return await self.api_call("POST", "/qpet/social/friend/flower", {"targetUserId": target_user_id})
     async def get_friends(self): return await self.api_call("GET", "/qpet/friends")
+    async def get_fightable_friends(self): return await self.api_call("GET", "/qpet/battle/friends")
     async def get_friend_requests(self): return await self.api_call("GET", "/qpet/social/friends/requests")
     async def accept_friend(self, user_id): return await self.api_call("POST", f"/qpet/social/friends/accept/{user_id}")
     async def request_friend(self, user_id): return await self.api_call("POST", f"/qpet/social/friends/request/{user_id}")

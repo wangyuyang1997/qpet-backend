@@ -67,8 +67,12 @@ class FarmDetail(BaseModel):
     experience: int = 0
     level: int = 0
     museum: dict = {}
+    museum_progress: dict = {}         # 从 player_museum 表查
+    collection_progress: dict = {}     # 从 player_collection 表查
     exploration_status: dict = {}
-    land_levels: list[dict] = []
+    land: dict = {}                    # 统一土地: { level, name, research_points,
+                                       #   next: { level, name, rp_needed, artifacts,
+                                       #           growth_pct, harvest_pct, can_upgrade } }
     pet_guard_info: dict | None = None
 
 

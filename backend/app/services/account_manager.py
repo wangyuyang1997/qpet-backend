@@ -100,15 +100,13 @@ class AccountManager:
             self.class_name = data.get("className", "")
 
         self.running = True
-        await self._save_running(1)
         _managers[self.id] = self
         return True
 
     async def stop(self):
-        """停止账号引擎"""
+        """停止账号引擎（不修改 running 状态，由 engine.stop() 统一管理）"""
         self.running = False
         _managers.pop(self.id, None)
-        await self._save_running(0)
 
     # ——— 重登 ———
 
@@ -210,7 +208,7 @@ async def list_accounts(db: AsyncSession) -> list[dict]:
             "name": row.nickname or row.id[:8],
             "level": row.level,
             "class_name": row.class_name,
-            "running": engine._running if engine else False,
+            "running": bool(row.running),
             "user_id": row.user_id,
             "has_credentials": bool(row.username and row.password),
             "is_premium": bool(row.is_premium),

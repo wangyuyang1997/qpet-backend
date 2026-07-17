@@ -17,14 +17,12 @@ class Equip:
         if not result.get("success"):
             return 0
 
-        data = result.get("data", {})
-        equipped = data.get("equipped", [])
-        inventory = data.get("inventory", [])
-
-        equipped_map = {e.get("slot"): e for e in equipped}
+        data = result.get("data", {}) or {}
+        equipped_map = data.get("equipped", {})  # {slot_name: item_obj}
+        items = data.get("items", []) or []
         equipped_count = 0
 
-        for item in inventory:
+        for item in items:
             slot = item.get("slot", "")
             score = item.get("score", item.get("combatPower", 0))
             current = equipped_map.get(slot, {})

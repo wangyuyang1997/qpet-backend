@@ -4,11 +4,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.auth_middleware import get_current_user
+from app.core.redis import cache_get, cache_set
 from app.services.account_manager import list_accounts as get_all_accounts
 from app.services.engine import get_engine, get_or_create_engine
+from app.services.farm.query import FarmQuery
+from app.core.database import AsyncSessionLocal
 from app.models.user import User, UserAccount
+import json
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+
+CACHE_TTL = 300  # 5 minutes
+
+
+async def _redis_or_fetch(account_id: str, key: str, fetcher):
+    """先从 Redis 读缓存，miss 则调游戏 API 并回写缓存"""
+    cache_key = f"qpet:{account_id}:{key}"
+    cached = await cache_get(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+
+    engine = get_engine(account_id)
+    if not engine or not engine.client:
+        return None
+
+    result = await engine.cached_get(key, lambda: fetcher(engine.client))
+    if result.get("success"):
+        data = result.get("data", result)
+        try:
+            await cache_set(cache_key, json.dumps(data), CACHE_TTL)
+        except Exception:
+            pass
+        return data
+    return None
 
 
 @router.get("")
@@ -36,27 +67,89 @@ async def list_accounts(
 
 @router.get("/{account_id}/farm")
 async def get_account_farm(account_id: str, _user: dict = Depends(get_current_user)):
+    cache_key = f"qpet:{account_id}:farm"
+
+    # 农场计数统一从 daily_records 查表，与引擎是否在线无关
+    from datetime import date
+    from sqlalchemy import select
+    from app.models.daily_record import DailyRecord
+    from app.core.database import AsyncSessionLocal
+    db = AsyncSessionLocal()
+    try:
+        r = await db.execute(
+            select(DailyRecord).where(
+                DailyRecord.account_id == account_id,
+                DailyRecord.date == date.today(),
+            )
+        )
+        row = r.scalar_one_or_none()
+        db_counts = {
+            "todayStealCount": row.steals if row else 0,
+            "todayDigCount": row.digs if row else 0,
+            "todayHarvestExp": row.today_harvest_exp if row else 0,
+            "todayCareCount": row.waters if row else 0,
+        }
+    except Exception:
+        db_counts = {}
+    finally:
+        await db.close()
+
     engine = get_engine(account_id)
     if not engine or not engine.farm_status:
-        return {"success": False, "message": "引擎未运行"}
+        # 引擎不在线也返回计数器，前端至少能看到数据
+        return {"success": True, "data": db_counts}
 
     status = await engine.farm_status.get()
     if not status:
-        return {"success": False, "message": "获取农场状态失败"}
+        return {"success": True, "data": db_counts}
 
+    status.update(db_counts)
+
+    try:
+        await cache_set(cache_key, json.dumps(status), 60)
+    except Exception:
+        pass
     return {"success": True, "data": status}
+
+
+@router.get("/{account_id}/equipment")
+async def get_account_equipment(account_id: str, _user: dict = Depends(get_current_user)):
+    data = await _redis_or_fetch(account_id, "equipment", lambda c: c.get_equipment())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取装备失败"}
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/inventory")
+async def get_account_inventory(account_id: str, _user: dict = Depends(get_current_user)):
+    data = await _redis_or_fetch(account_id, "inventory", lambda c: c.get_inventory())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取背包失败"}
+    return {"success": True, "data": data}
 
 
 @router.get("/{account_id}/character")
 async def get_account_character(account_id: str, _user: dict = Depends(get_current_user)):
-    engine = get_engine(account_id)
-    if not engine or not engine.client:
-        return {"success": False, "message": "引擎未运行"}
+    data = await _redis_or_fetch(account_id, "character", lambda c: c.get_character())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取角色失败"}
+    return {"success": True, "data": data}
 
-    result = await engine.client.get_character()
-    if result.get("success"):
-        return {"success": True, "data": result.get("data", result)}
-    return {"success": False, "message": result.get("message", "获取角色失败")}
+
+@router.get("/{account_id}/skill-tree")
+async def get_account_skill_tree(account_id: str, _user: dict = Depends(get_current_user)):
+    data = await _redis_or_fetch(account_id, "skill-tree", lambda c: c.get_skill_tree())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取技能树失败"}
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/gang")
+async def get_account_gang(account_id: str, _user: dict = Depends(get_current_user)):
+    data = await _redis_or_fetch(account_id, "gang", lambda c: c.get_gang_status())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取帮派失败"}
+    return {"success": True, "data": data}
 
 
 @router.get("/{account_id}/sso-data")
@@ -93,6 +186,105 @@ async def stop_account(account_id: str, _user: dict = Depends(get_current_user))
     return {"success": True, "message": "引擎已停止"}
 
 
+# ——— 博物馆 / 图鉴 / 土地 ——— 从 DB 查表，不调游戏 API ———
+# 注意：必须在 /{account_id}/{action} 通配路由之前注册，否则会被拦截
+
+@router.get("/{account_id}/museum-progress")
+async def get_museum_progress(account_id: str, _user: dict = Depends(get_current_user)):
+    q = FarmQuery(AsyncSessionLocal)
+    data = await q.museum_progress(account_id)
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/collection-progress")
+async def get_collection_progress(account_id: str, _user: dict = Depends(get_current_user)):
+    q = FarmQuery(AsyncSessionLocal)
+    data = await q.collection_progress(account_id)
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/inventory-progress")
+async def get_inventory_progress(account_id: str, _user: dict = Depends(get_current_user)):
+    q = FarmQuery(AsyncSessionLocal)
+    data = await q.inventory(account_id)
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/land-status")
+async def get_land_status(account_id: str, _user: dict = Depends(get_current_user)):
+    q = FarmQuery(AsyncSessionLocal)
+    data = await q.land_status(account_id)
+    if data is None:
+        return {"success": False, "message": "暂无土地数据"}
+    return {"success": True, "data": data}
+
+
+@router.put("/{account_id}/credentials")
+async def update_credentials(account_id: str, body: dict, db: AsyncSession = Depends(get_db), _user: dict = Depends(get_current_user)):
+    """更新账号的用户名和密码"""
+    from app.models.account import Account
+    from app.core.crypto import encrypt_password
+
+    result = await db.execute(select(Account).where(Account.id == account_id))
+    row = result.scalar_one_or_none()
+    if not row:
+        return {"success": False, "message": "账号不存在"}
+
+    if body.get("username"):
+        row.username = body["username"]
+    if body.get("password"):
+        row.password = encrypt_password(body["password"])
+
+    await db.commit()
+
+    # 如果引擎在运行，更新内存中的凭证 + 重置密钥对
+    engine = get_engine(account_id)
+    if engine and engine.mgr:
+        engine.mgr.username = row.username
+        engine.mgr.password_encrypted = row.password
+        if engine.client:
+            engine.client.delete_key()
+            await engine.client.ensure_ecdsa_ready()
+
+    return {"success": True, "data": {
+        "username": row.username,
+        "password_masked": "********" if row.password else "",
+    }}
+
+
+@router.post("/{account_id}/regenerate-key")
+async def regenerate_key(account_id: str, _user: dict = Depends(get_current_user)):
+    """重新生成 ECDSA 签名密钥（用于密钥失效时）"""
+    engine = get_engine(account_id)
+    if not engine or not engine.client:
+        return {"success": False, "message": "引擎未运行，请先启引擎再生成密钥"}
+
+    # 删旧密钥 + 重新生成注册
+    engine.client.delete_key()
+    ok = await engine.client.ensure_ecdsa_ready()
+    if ok:
+        return {"success": True, "message": "ECDSA 密钥已重新生成并注册"}
+    return {"success": False, "message": "密钥生成失败"}
+
+
+@router.get("/{account_id}/credentials")
+async def get_credentials(account_id: str, _user: dict = Depends(get_current_user)):
+    """获取账号的账密信息（密码脱敏）"""
+    from app.models.account import Account
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Account).where(Account.id == account_id))
+        row = result.scalar_one_or_none()
+        if not row:
+            return {"success": False, "message": "账号不存在"}
+
+        return {"success": True, "data": {
+            "username": row.username or "",
+            "has_password": bool(row.password),
+        }}
+
+
 @router.post("/{account_id}/{action}")
 async def trigger_action(account_id: str, action: str, _user: dict = Depends(get_current_user)):
     engine = get_engine(account_id)
@@ -102,7 +294,7 @@ async def trigger_action(account_id: str, action: str, _user: dict = Depends(get
         return {"success": False, "message": "引擎未运行"}
 
     if action == "cycle":
-        await engine.full_cycle()
+        await engine.full_auto_cycle()
     elif action == "fight":
         await engine._run_battle()
     elif action == "farm":

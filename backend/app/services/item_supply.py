@@ -22,6 +22,7 @@ class ItemSupply:
         self._inventory = inventory
         self._config = config_svc
         self._account_id = account_id
+        self.challenge_used = 0
 
     async def ensure(self, item_key: str, current_stock: int, threshold: int = 0) -> bool:
         """
@@ -43,6 +44,8 @@ class ItemSupply:
         result = await self._inventory.use_by_name(rule["name"])
         if result and result.get("success"):
             logger.info(f"[{self._account_id}] 补给 {rule['name']} 成功")
+            if item_key == "challenge_book":
+                self.challenge_used += 1
             return True
 
         return False
