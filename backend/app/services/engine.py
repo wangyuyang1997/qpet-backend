@@ -121,6 +121,7 @@ class GameEngine:
         self.farm_land = None
 
         self._character_cache: dict = {}
+        self._profile_cache: dict = {}
         self._marriage_partner_id: str | None = None
         self._farm_cycle_index = 0
         self._abyss_tickets = 0
@@ -242,6 +243,10 @@ class GameEngine:
             else:
                 warn("系统", "引擎", "初始化获取角色信息失败", self.account_id)
 
+            profile = await self.client.get_profile()
+            if profile.get("success"):
+                self._profile_cache = profile.get("data", {})
+
             # 从 daily_records 恢复今日已完成状态，重启不丢
             await self._restore_daily_state()
 
@@ -270,6 +275,9 @@ class GameEngine:
             await self.mgr._save_info()
         else:
             warn("系统", "引擎", "角色刷新API返回失败", self.account_id)
+        profile = await self.client.get_profile()
+        if profile.get("success"):
+            self._profile_cache = profile.get("data", {})
 
     async def _sync_inventory_to_db(self):
         """同步背包数据入库（先删后插），同时缓存深渊票数量"""
@@ -376,6 +384,14 @@ class GameEngine:
 
             # character → /accounts/{id}/character
             await cache("character", lambda: self.client.get_character())
+
+            # profile → /accounts/{id}/profile (主站经验)
+            async def _fetch_and_cache_profile():
+                result = await self.client.get_profile()
+                if result.get("success"):
+                    self._profile_cache = result.get("data", {})
+                return result
+            await cache("profile", _fetch_and_cache_profile)
 
             # equipment → /accounts/{id}/equipment
             await cache("equipment", lambda: self.client.get_equipment())
@@ -484,7 +500,7 @@ class GameEngine:
         return 0
 
     async def _restore_daily_state(self):
-        """从 daily_records 恢复今天已完成的一次性操作状态"""
+        """从 daily_records 恢复今天已完成的一次性操作状态 和 累积计数器"""
         try:
             from datetime import date
             from sqlalchemy import select
@@ -504,6 +520,33 @@ class GameEngine:
                     self.chest._done_date = today.isoformat()
                 if row.exp_boost_checked and self.exp_boost:
                     self.exp_boost._failed_date = today.isoformat()
+                # 恢复累积计数器，防止重启丢失进度
+                if self.farm_harvest and row.harvests:
+                    self.farm_harvest._harvested = max(self.farm_harvest._harvested, row.harvests)
+                if self.farm_plant and row.plants:
+                    self.farm_plant._planted = max(self.farm_plant._planted, row.plants)
+                if self.npc and row.npc_fights:
+                    self.npc.today_count = max(getattr(self.npc, "today_count", 0), row.npc_fights)
+                if self.npc and row.exp_battle:
+                    self.npc.today_exp = max(getattr(self.npc, "today_exp", 0), row.exp_battle)
+                if self.farm_care and row.waters:
+                    self.farm_care.helped = max(getattr(self.farm_care, "helped", 0), row.help_waters or 0)
+                if self.farm_dig and row.digs:
+                    setattr(self.farm_dig, "_dug", max(getattr(self.farm_dig, "_dug", 0), row.digs))
+                if self.farm_land and row.land_upgrades:
+                    self.farm_land.today_count = max(getattr(self.farm_land, "today_count", 0), row.land_upgrades)
+                if self.ad_stamina and row.stamina_ads:
+                    self.ad_stamina.today_count = max(getattr(self.ad_stamina, "today_count", 0), row.stamina_ads)
+                if self.ad_community and row.community_ads:
+                    self.ad_community.today_count = max(getattr(self.ad_community, "today_count", 0), row.community_ads)
+                if self.ad_farm and row.farm_ads:
+                    self.ad_farm.today_count = max(getattr(self.ad_farm, "today_count", 0), row.farm_ads)
+                if hasattr(self, '_tower_revive') and row.tower_revive:
+                    self._tower_revive = max(self._tower_revive, row.tower_revive)
+                if self.shop_special and row.challenge_books:
+                    self.shop_special.today_count = max(getattr(self.shop_special, "today_count", 0), row.challenge_books)
+                if hasattr(self, '_abyss_tickets') and row.abyss_tickets:
+                    self._abyss_tickets = max(self._abyss_tickets or 0, row.abyss_tickets)
         except Exception:
             pass
 
@@ -544,7 +587,7 @@ class GameEngine:
             "flowers_remaining": getattr(self.shop_special, "flower_stock", 0),
             "abyss_tickets": self._abyss_tickets,
             "plants": getattr(self.farm_plant, "_planted", 0) if self.farm_plant else 0,
-            "harvests": farm_status.get("todayHarvests", 0),
+            "harvests": getattr(self.farm_harvest, "_harvested", 0) if self.farm_harvest else 0,
             "steals": await self._get_steal_count(),
             "waters": farm_status.get("todayCareCount", 0),
             "help_waters": getattr(self.farm_care, "helped", 0) if self.farm_care else 0,
@@ -569,13 +612,32 @@ class GameEngine:
             char_fields.update({
                 "level": char.get("level", 0),
                 "class_name": char.get("className", ""),
-                "combat_power": char.get("combatPower", 0),
-                "current_exp": char.get("exp", char.get("experience", 0)),
+                "combat_power": char.get("pve_power") or (char.get("pveCombatPower") or {}).get("score") or 0,
+                "current_exp": self._profile_cache.get("experience", self._profile_cache.get("exp", 0)),
                 "level_exp": char.get("exp", 0),
                 "level_exp_max": char.get("expToNext", 0),
                 "stamina": char.get("stamina", 0),
                 "max_stamina": char.get("max_stamina") or char.get("maxStamina", 0),
             })
+
+        # 累积型计数器：读取已有记录，取 max 防止重启覆盖
+        from sqlalchemy import select as _select
+        _existing = await self.db.execute(
+            _select(DailyRecord).where(DailyRecord.account_id == self.account_id, DailyRecord.date == today)
+        )
+        _erow = _existing.scalar_one_or_none()
+        _cumulative_keys = (
+            "npc_fights", "tower_floors", "harvests", "plants", "steals",
+            "waters", "help_waters", "digs", "land_upgrades",
+            "stamina_ads", "community_ads", "farm_ads",
+            "today_harvest_exp", "exp_battle", "gang_contribution",
+            "gang_boss_fights", "gang_challenge_books", "challenge_books",
+            "tower_revive", "flowers_sent", "abyss_tickets",
+        )
+        if _erow:
+            for _k in _cumulative_keys:
+                if _k in counters and (_erow_val := getattr(_erow, _k, 0) or 0) > counters[_k]:
+                    counters[_k] = _erow_val
 
         # insert 需要全量字段，update 只覆盖 char_fields + counters
         all_vals = {"account_id": self.account_id, "date": today, **char_fields, **counters}
@@ -746,6 +808,8 @@ class GameEngine:
                             harvested_count += 1
                         await asyncio.sleep(0.8)
                 info("农场", "农场", f"收获完成: {harvested_count}/{len(ready)}块", self.account_id)
+                if harvested_count and self.farm_harvest:
+                    self.farm_harvest._harvested += harvested_count
 
             # 3. Remove withered
             withered = [s for s in slots if s.get("state") == "withered"]
