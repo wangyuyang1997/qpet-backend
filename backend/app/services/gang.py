@@ -1,6 +1,7 @@
-"""帮派管理 — 捐赠+技能学习"""
+"""帮派管理 — 技能学习"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -12,21 +13,15 @@ class Gang:
         self._account_id = account_id
 
     async def run(self) -> dict:
-        """返回 {donated, skills_learned}"""
-        results = {"donated": False, "skills_learned": 0}
+        """返回 {skills_learned}"""
+        results = {"skills_learned": 0}
 
         status = await self._client.get_gang_status()
         if not status.get("success"):
+            warn("乐斗", "帮派", "获取帮派状态API失败", self._account_id)
             return results
 
         data = status.get("data", {})
-
-        # 捐赠
-        if data.get("canDonate", False):
-            result = await self._client.gang_donate(500)
-            if result.get("success"):
-                results["donated"] = True
-                logger.info(f"[{self._account_id}] 帮派捐赠")
 
         # 技能学习
         skills = data.get("availableSkills", data.get("skills", []))
@@ -35,8 +30,10 @@ class Gang:
                 result = await self._client.learn_gang_skill(skill.get("name", ""))
                 if result.get("success"):
                     results["skills_learned"] += 1
+                else:
+                    warn("乐斗", "帮派", f"学习技能失败: {skill.get('name', '?')}", self._account_id)
 
         if results["skills_learned"]:
-            logger.info(f"[{self._account_id}] 学习帮派技能 {results['skills_learned']}个")
+            info("乐斗", "帮派", f"学习帮派技能 {results['skills_learned']}个", self._account_id)
 
         return results

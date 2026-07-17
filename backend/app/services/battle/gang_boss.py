@@ -3,7 +3,7 @@ import logging
 from app.services.qpet_client import QPetClient
 from app.services.config_service import ConfigService
 from app.services.item_supply import ItemSupply
-from app.core.logger import action as log_action
+from app.core.logger import action as log_action, info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ class GangBoss:
     async def run(self) -> dict:
         status = await self._client.get_gang_boss_status()
         if not status.get("success"):
+            warn("乐斗", "帮派BOSS", "获取帮派BOSS状态API失败", self._account_id)
             return {"ok": False, "reason": "获取帮派BOSS状态失败"}
 
         data = status.get("data", {})
@@ -54,15 +55,17 @@ class GangBoss:
                 used += 1
 
         if used:
-            logger.info(f"[{self._account_id}] 帮派BOSS完成: {used}次, 最高BOSS={top_boss.get('name', top_boss.get('id'))}")
+            info("乐斗", "帮派BOSS", f"帮派BOSS完成: {used}次, 最高BOSS={top_boss.get('name', top_boss.get('id'))}", self._account_id)
         return {"ok": True, "used": used}
 
     async def _do_boss(self, boss_id: int) -> bool:
         result = await self._client.prepare_gang_boss(boss_id)
         if not result.get("success"):
+            warn("乐斗", "帮派BOSS", f"准备BOSS#{boss_id}失败", self._account_id)
             return False
         battle_token = result.get("data", {}).get("battleToken", "")
         if not battle_token:
+            warn("乐斗", "帮派BOSS", f"BOSS#{boss_id}缺少battleToken", self._account_id)
             return False
         settle = await self._client.settle_gang_boss(battle_token, True)
         if settle.get("success"):
@@ -71,4 +74,5 @@ class GangBoss:
             self.today_contrib += contrib
             log_action("乐斗", "帮派BOSS", f"BOSS#{boss_id}: {'胜' if contrib > 0 else '败'} +{contrib}贡献", self._account_id)
             return True
+        warn("乐斗", "帮派BOSS", f"BOSS#{boss_id}结算失败", self._account_id)
         return False

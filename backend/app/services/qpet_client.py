@@ -1,5 +1,6 @@
 """QPet 游戏 API 客户端 — ECDSA 签名 + HTTP + 风控 + 静默白名单"""
 import json
+import logging
 import time
 import random
 import uuid
@@ -15,6 +16,8 @@ from app.core.crypto import (
     import_private_key,
     ecdsa_sign,
 )
+
+logger = logging.getLogger(__name__)
 
 # 已知良性失败消息，不记日志
 SILENT_ERRORS = [
@@ -48,6 +51,7 @@ class QPetClient:
         if jwk:
             try:
                 self.private_key = import_private_key(jwk)
+                self._ecdsa_jwk = export_public_jwk(self.private_key)
                 self._ready = True
                 return True
             except Exception:
@@ -68,6 +72,7 @@ class QPetClient:
             store[self.account_id] = priv_jwk
             save_key_store(store)
             self.private_key = key
+            self._ecdsa_jwk = pub_jwk
             self._ready = True
             return True
 
@@ -144,21 +149,24 @@ class QPetClient:
                     return {"success": False, "rateLimited": True, "message": "请求过于频繁"}
 
                 if resp.status_code == 401:
+                    logger.warning(f"[{self.account_id}] API 401 认证失败: {self._last_api_call}")
                     return {"success": False, "message": "认证失败"}
 
                 try:
                     data = resp.json()
                 except Exception:
+                    logger.error(f"[{self.account_id}] JSON解析失败: {self._last_api_call}")
                     return {"success": False, "message": "服务器返回异常"}
 
                 if not data.get("success"):
                     msg = data.get("message", "")
                     if not any(e in msg for e in SILENT_ERRORS):
-                        pass  # 日志由调用方处理
+                        logger.warning(f"[{self.account_id}] API失败: {self._last_api_call} → {msg[:80]}")
 
                 return data
 
-        except httpx.RequestError:
+        except httpx.RequestError as e:
+            logger.error(f"[{self.account_id}] 网络错误: {self._last_api_call} ({e})")
             return {"success": False, "message": "网络错误"}
 
     async def _raw_request(self, method: str, path: str, body: dict = None, skip_sign: bool = False) -> dict:

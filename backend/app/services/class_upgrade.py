@@ -1,7 +1,7 @@
 """职业/技能/觉醒"""
 import logging
 from app.services.qpet_client import QPetClient
-from app.core.logger import action as log_action
+from app.core.logger import action as log_action, warn, info
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ class ClassUpgrade:
 
         info = await self._client.get_class_info()
         if not info.get("success"):
+            warn("乐斗", "修炼", "获取职业信息API失败", self._account_id)
             return results
 
         data = info.get("data", {})
@@ -31,6 +32,8 @@ class ClassUpgrade:
                 if result.get("success"):
                     results["selected"] = True
                     log_action("乐斗", "修炼", f"选择职业: {cls.get('name')}", self._account_id)
+                else:
+                    warn("乐斗", "修炼", f"选择职业失败: {cls.get('name')}", self._account_id)
 
         # 分配技能
         tree = await self._client.get_skill_tree()
@@ -43,6 +46,10 @@ class ClassUpgrade:
                         results["skills_allocated"] += 1
                         name = node.get("name", "?")
                         log_action("乐斗", "修炼", f"分配技能点: {name}", self._account_id)
+                    else:
+                        warn("乐斗", "修炼", f"分配技能失败: {node.get('name', '?')}", self._account_id)
+        else:
+            warn("乐斗", "修炼", "获取技能树API失败", self._account_id)
 
         # 觉醒
         if level >= 40 and data.get("canAwaken", False):
@@ -50,5 +57,10 @@ class ClassUpgrade:
             if result.get("success"):
                 results["awakened"] = True
                 log_action("乐斗", "修炼", "职业觉醒成功", self._account_id)
+            else:
+                warn("乐斗", "修炼", "职业觉醒失败", self._account_id)
+
+        if results["skills_allocated"]:
+            info("乐斗", "修炼", f"技能分配完成: {results['skills_allocated']}点", self._account_id)
 
         return results

@@ -1,6 +1,7 @@
 """拍卖行 — 快照+购买"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,13 @@ class Auction:
                 candidates.append((price, item.get("id")))
 
         if not candidates:
+            warn("乐斗", "拍卖", f"未找到匹配拍品: {name}", self._account_id)
             return False
 
         candidates.sort(key=lambda x: x[0])
         result = await self._client.buy_auction(candidates[0][1])
         if result.get("success"):
-            logger.info(f"[{self._account_id}] 拍卖购买: {name} ${candidates[0][0]}")
+            info("乐斗", "拍卖", f"购买: {name} ${candidates[0][0]}", self._account_id)
             return True
+        warn("乐斗", "拍卖", f"购买失败: {name}", self._account_id)
         return False

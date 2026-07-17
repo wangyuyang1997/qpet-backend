@@ -1,6 +1,7 @@
 """求婚/接受求婚 — 亲密度≥100触发"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +24,17 @@ class MarriageProposal:
         if pending:
             result = await self._client.respond_marriage(True)
             if result.get("success"):
-                logger.info(f"[{self._account_id}] 已接受求婚")
+                info("乐斗", "婚姻", "已接受求婚", self._account_id)
                 return True
+            warn("乐斗", "婚姻", "接受求婚失败", self._account_id)
             return False
 
         intimacy = data.get("intimacy", 0)
         if intimacy >= 100:
             result = await self._client.propose_marriage()
             if result.get("success"):
-                logger.info(f"[{self._account_id}] 已发起求婚")
+                info("乐斗", "婚姻", "已发起求婚", self._account_id)
                 return True
+            warn("乐斗", "婚姻", "发起求婚失败", self._account_id)
 
         return False

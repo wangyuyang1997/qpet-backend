@@ -1,7 +1,7 @@
 """NPC 快速乐斗 — 每日10次"""
 import logging
 from app.services.qpet_client import QPetClient
-from app.core.logger import action
+from app.core.logger import action, warn
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,13 @@ class NpcBattle:
     async def fight_one(self) -> dict:
         result = await self._client.fight_npc()
         if not result.get("success"):
+            warn("乐斗", "NPC乐斗", f"NPC准备失败: {result.get('message', '')}", self._account_id)
             return {"ok": False, "reason": result.get("message", "") or "prepare失败"}
 
         data = result.get("data", {}) or {}
         battle_token = data.get("battleToken", "")
         if not battle_token:
+            warn("乐斗", "NPC乐斗", "缺少battleToken", self._account_id)
             return {"ok": False, "reason": "无battleToken"}
 
         settle = await self._client.settle_battle(battle_token, True)
@@ -33,4 +35,5 @@ class NpcBattle:
             action("乐斗", "NPC乐斗", f"{'胜' if exp > 0 else '败'} +{exp}EXP", self._account_id)
             return {"ok": True}
 
+        warn("乐斗", "NPC乐斗", f"NPC结算失败: {settle.get('message', '')}", self._account_id)
         return {"ok": False, "reason": settle.get("message", "settle失败")}

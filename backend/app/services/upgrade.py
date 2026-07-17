@@ -2,6 +2,7 @@
 import logging
 from app.services.qpet_client import QPetClient
 from app.services.item_supply import ItemSupply
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class Upgrade:
 
         beads = await self._client.get_bead_inventory()
         if not beads.get("success"):
+            warn("乐斗", "魂珠", "获取魂珠背包API失败", self._account_id)
             return results
 
         data = beads.get("data", {})
@@ -27,8 +29,9 @@ class Upgrade:
             result = await self._client.auto_merge_beads("all", 8)
             if result.get("success"):
                 results["auto_merged"] = True
-                logger.info(f"[{self._account_id}] 魂珠一键合成")
+                info("乐斗", "魂珠", "魂珠一键合成成功", self._account_id)
                 return results
+            warn("乐斗", "魂珠", "魂珠一键合成失败，回退手动", self._account_id)
 
         # 手动逐级合成
         for level in range(1, 8):
@@ -37,6 +40,6 @@ class Upgrade:
                 results["manual_merged"] = True
 
         if results["manual_merged"]:
-            logger.info(f"[{self._account_id}] 魂珠手动合成")
+            info("乐斗", "魂珠", "魂珠手动合成成功", self._account_id)
 
         return results

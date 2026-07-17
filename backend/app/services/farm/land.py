@@ -3,6 +3,7 @@ import logging
 from sqlalchemy import select
 from app.models.farm_land import FarmLand as FarmLandModel
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,8 @@ class FarmLand:
         ok = await self._client.farm_upgrade_land(0)
         if ok.get("success"):
             self.today_count += 1
-            logger.info(
-                f"[{self._account_id}] 统一土地升级: "
-                f"Lv.{prev_level} -> {next_name} 升级成功"
-            )
+            info("农场", "土地", f"土地升级 Lv.{prev_level} -> {next_name}", self._account_id)
             return 1
 
+        warn("农场", "土地", "土地升级API失败", self._account_id)
         return 0

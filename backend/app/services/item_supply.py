@@ -3,6 +3,7 @@ import logging
 from app.services.qpet_client import QPetClient
 from app.services.inventory import Inventory
 from app.services.config_service import ConfigService
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,10 @@ class ItemSupply:
 
         result = await self._inventory.use_by_name(rule["name"])
         if result and result.get("success"):
-            logger.info(f"[{self._account_id}] 补给 {rule['name']} 成功")
+            info("乐斗", "补给", f"补给 {rule['name']} 成功", self._account_id)
             if item_key == "challenge_book":
                 self.challenge_used += 1
             return True
 
+        warn("乐斗", "补给", f"补给失败: {rule['name']} (背包不足或API失败)", self._account_id)
         return False

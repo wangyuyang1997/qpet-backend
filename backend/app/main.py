@@ -40,7 +40,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"恢复引擎失败: {e}")
 
+    # 启动调度器 + 日志日切
+    try:
+        from app.services.scheduler import scheduler, register_cron, start as start_scheduler
+        from app.core.logger import migrate_logs_to_history
+        start_scheduler()
+        register_cron(migrate_logs_to_history, "2 0 * * *", "log_migration", jitter=30)
+        # 启动时立即执行一次日切（处理重启间隔内的旧日志）
+        import asyncio as _asyncio
+        _asyncio.get_event_loop().run_in_executor(None, migrate_logs_to_history)
+        logger.info("日志日切定时任务已注册 (每日00:02)")
+    except Exception as e:
+        logger.warning(f"启动日志日切失败: {e}")
+
     yield
+
+    try:
+        from app.services.scheduler import shutdown as stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
 
     try:
         from app.core.redis import close_redis

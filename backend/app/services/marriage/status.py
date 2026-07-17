@@ -1,5 +1,8 @@
 """婚姻状态查询"""
+import logging
 from app.services.qpet_client import QPetClient
+
+logger = logging.getLogger(__name__)
 
 
 class MarriageStatus:
@@ -12,5 +15,6 @@ class MarriageStatus:
         """返回 {married, partner, partnerUserId, intimacy, todayGiftSent, todayBossDone}"""
         result = await self._client.get_marriage_status()
         if not result.get("success"):
+            logger.warning("获取婚姻状态API失败")
             return {"married": False}
         return result.get("data", {})

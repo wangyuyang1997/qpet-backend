@@ -2,6 +2,7 @@
 import logging
 from app.services.qpet_client import QPetClient
 from app.services.item_supply import ItemSupply
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class MarriageGift:
                 await self._supply.ensure("flowers", 0)
                 result = await self._client.send_gift(partner_id)
                 if not result.get("success"):
+                    warn("乐斗", "婚姻", "婚内送花失败(已补花重试)", self._account_id)
                     break
 
             count += 1
@@ -41,5 +43,5 @@ class MarriageGift:
             intimacy += 10
 
         if count:
-            logger.info(f"[{self._account_id}] 婚内送花 {count}次")
+            info("乐斗", "婚姻", f"婚内送花 {count}次", self._account_id)
         return count

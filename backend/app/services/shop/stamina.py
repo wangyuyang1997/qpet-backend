@@ -1,6 +1,7 @@
 """商店 — 体力购买（大瓶180→面包20→中瓶100→小瓶50 优先级）"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class ShopStamina:
         """返回实际购买次数"""
         status = await self._client.get_shop_status()
         if not status.get("success"):
+            warn("乐斗", "商店", "获取商店状态API失败", self._account_id)
             return 0
 
         items = status.get("data", {}).get("items", [])
@@ -31,6 +33,8 @@ class ShopStamina:
                         if result.get("success"):
                             current_exp -= price
                             bought += 1
-                            logger.info(f"[{self._account_id}] 购买{item.get('name', item_id)} EXP-{price}")
+                            info("乐斗", "商店", f"购买{item.get('name', item_id)} EXP-{price}", self._account_id)
+                        else:
+                            warn("乐斗", "商店", f"购买失败: {item.get('name', item_id)}", self._account_id)
 
         return bought

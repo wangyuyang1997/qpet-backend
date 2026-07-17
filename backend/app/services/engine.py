@@ -233,17 +233,20 @@ class GameEngine:
             if char.get("success"):
                 self._character_cache = char.get("data", {})
                 self._marriage_partner_id = self._character_cache.get("marriagePartnerId")
-                # 同步角色信息到 mgr + 入库
                 self.mgr.nickname = self._character_cache.get("nickname", self.mgr.nickname)
                 self.mgr.level = self._character_cache.get("level", self.mgr.level)
                 self.mgr.class_name = self._character_cache.get("className", self.mgr.class_name)
                 await self.mgr._save_info()
+                info("系统", "引擎", f"角色 {self.mgr.nickname} Lv.{self.mgr.level} 已同步", self.account_id)
+            else:
+                warn("系统", "引擎", "初始化获取角色信息失败", self.account_id)
 
             await self._run_marriage()
 
             async def retry():
                 await asyncio.sleep(5)
                 await self._run_marriage()
+
             asyncio.create_task(retry())
 
             # 启动后延迟30s执行首轮，避免启动风暴触发风控
@@ -261,22 +264,27 @@ class GameEngine:
             self.mgr.level = self._character_cache.get("level", self.mgr.level)
             self.mgr.class_name = self._character_cache.get("className", self.mgr.class_name)
             await self.mgr._save_info()
+        else:
+            warn("系统", "引擎", "角色刷新API返回失败", self.account_id)
 
     async def _sync_inventory_to_db(self):
         """同步背包数据入库（先删后插）"""
         try:
             inv = await self.client.get_inventory()
             if not inv.get("success"):
+                warn("系统", "引擎", "背包同步API失败", self.account_id)
                 return
             items = inv.get("data", {}).get("items", [])
             if not items:
+                info("系统", "引擎", "背包为空，跳过同步", self.account_id)
                 return
             from app.services.farm.sync import FarmSync
             from app.core.database import AsyncSessionLocal
             sync = FarmSync(AsyncSessionLocal)
             await sync._sync_inventory(self.account_id, items)
-        except Exception:
-            pass
+            info("系统", "引擎", f"背包同步完成 ({len(items)}件)", self.account_id)
+        except Exception as e:
+            log_error("系统", "引擎", f"背包同步异常: {e}", self.account_id)
 
     # ——— 主循环 ———
 
@@ -290,6 +298,7 @@ class GameEngine:
 
     async def full_auto_cycle(self):
         start_time = time.time()
+        info("系统", "引擎", "开始完整自动循环", self.account_id)
 
         await self._refresh_character()
         await self._sync_inventory_to_db()
@@ -333,6 +342,78 @@ class GameEngine:
         elapsed = time.time() - start_time
         action("系统", "引擎", f"执行完整自动循环... ({elapsed:.1f}s)", self.account_id)
         await self._persist_daily()
+        await self._warm_api_caches()
+
+    async def _warm_api_caches(self):
+        """将引擎循环中已获取的数据写入 Redis，让前端 API 永远命中缓存。
+        覆盖 character / equipment / inventory / skill-tree / gang / farm 共 6 个接口。
+        每 30 分钟调用一次，额外开销可忽略。
+        """
+        try:
+            from app.core.redis import cache_set
+            import json
+
+            async def cache(key: str, fetcher, ttl: int = 600):
+                try:
+                    result = await fetcher()
+                    if result.get("success"):
+                        data = result.get("data", result)
+                        await cache_set(f"qpet:{self.account_id}:{key}", json.dumps(data), ttl)
+                except Exception:
+                    pass
+
+            # 按前端页面分组，每个接口一个 key
+
+            # character → /accounts/{id}/character
+            await cache("character", lambda: self.client.get_character())
+
+            # equipment → /accounts/{id}/equipment
+            await cache("equipment", lambda: self.client.get_equipment())
+
+            # inventory → /accounts/{id}/inventory
+            await cache("inventory", lambda: self.client.get_inventory())
+
+            # skill-tree → /accounts/{id}/skill-tree
+            await cache("skill-tree", lambda: self.client.get_skill_tree())
+
+            # gang → /accounts/{id}/gang
+            await cache("gang", lambda: self.client.get_gang_status())
+
+            # farm → /accounts/{id}/farm
+            await cache("farm", lambda: self._fetch_farm_data())
+
+        except Exception:
+            pass
+
+    async def _fetch_farm_data(self):
+        """获取农场数据并合并 DB 计数"""
+        from datetime import date
+        from sqlalchemy import select
+        from app.models.daily_record import DailyRecord
+        from app.core.database import AsyncSessionLocal
+
+        db = AsyncSessionLocal()
+        try:
+            r = await db.execute(
+                select(DailyRecord).where(
+                    DailyRecord.account_id == self.account_id,
+                    DailyRecord.date == date.today(),
+                )
+            )
+            row = r.scalar_one_or_none()
+            db_counts = {
+                "todayStealCount": row.steals if row else 0,
+                "todayDigCount": row.digs if row else 0,
+                "todayHarvestExp": row.today_harvest_exp if row else 0,
+                "todayCareCount": row.waters if row else 0,
+            }
+        finally:
+            await db.close()
+
+        status = await self.farm_status.get()
+        if status:
+            status.update(db_counts)
+        return {"success": True, "data": status or db_counts}
 
     async def _persist_steals(self):
         """只更新偷菜计数，不覆盖其他字段"""
@@ -359,8 +440,8 @@ class GameEngine:
                 for boss in gb["data"].get("bossList", []):
                     total += boss.get("todayContribEarned", 0) or 0
                 return total
-        except Exception:
-            pass
+        except Exception as e:
+            warn("系统", "引擎", f"获取帮贡异常: {e}", self.account_id)
         return 0
 
     async def _get_steal_count(self) -> int:
@@ -387,6 +468,7 @@ class GameEngine:
 
         char = self._character_cache
         if not char:
+            warn("系统", "引擎", "角色缓存为空，跳过每日记录持久化", self.account_id)
             return
 
         today = date.today()
@@ -395,17 +477,19 @@ class GameEngine:
         gang_boss_status = {}
         farm_status = {}
         try:
-            tower_status = await self.tower.get_status() or {}
-        except Exception:
-            pass
+            tower_status = await self.client.get_tower_status()
+            tower_status = tower_status.get("data", {}) if tower_status.get("success") else {}
+        except Exception as e:
+            warn("系统", "引擎", f"获取爬塔状态失败: {e}", self.account_id)
         try:
-            gang_boss_status = await self.gang.get_boss_status() or {}
-        except Exception:
-            pass
+            gang_boss_status = await self.client.get_gang_boss_status()
+            gang_boss_status = gang_boss_status.get("data", {}) if gang_boss_status.get("success") else {}
+        except Exception as e:
+            warn("系统", "引擎", f"获取帮派BOSS状态失败: {e}", self.account_id)
         try:
             farm_status = await self.farm_status.get() or {}
-        except Exception:
-            pass
+        except Exception as e:
+            warn("系统", "引擎", f"获取农场状态失败: {e}", self.account_id)
 
         # 计数器（始终写入，这些是今日累积值）
         counters = {
@@ -453,6 +537,8 @@ class GameEngine:
         try:
             await self.db.execute(stmt)
             await self.db.commit()
+            level = char.get("level", 0)
+            info("系统", "引擎", f"每日记录已持久化 (Lv.{level}, NPC{counters['npc_fights']}次, 塔{counters['tower_floors']}层)", self.account_id)
         except Exception as e:
             log_error("系统", "引擎", f"daily_record 写入失败: {e}", self.account_id)
 
@@ -491,7 +577,8 @@ class GameEngine:
                     await asyncio.sleep(3 if result.get("ok") else 10)
                 else:
                     await asyncio.sleep(30)
-            except Exception:
+            except Exception as e:
+                log_error("系统", "引擎", f"战斗循环异常: {e}", self.account_id)
                 await asyncio.sleep(10)
 
     async def _farm_loop(self):
@@ -504,8 +591,8 @@ class GameEngine:
                     else:
                         if random.random() < 0.8:
                             await self._run_farm_social()
-            except Exception:
-                pass
+            except Exception as e:
+                log_error("系统", "引擎", f"农场循环异常: {e}", self.account_id)
             await asyncio.sleep(120)
 
     async def _flower_loop(self):
@@ -517,8 +604,8 @@ class GameEngine:
                     if intimacy < 100:
                         await self.supply.ensure("flowers", 0)
                         await self.marriage_flowers.run(self._marriage_partner_id, intimacy)
-            except Exception:
-                pass
+            except Exception as e:
+                log_error("系统", "引擎", f"送花循环异常: {e}", self.account_id)
             await asyncio.sleep(300)
 
     async def _ad_poll_loop(self):
@@ -526,8 +613,8 @@ class GameEngine:
             try:
                 await self.ad_stamina.run()
                 await self.ad_community.run()
-            except Exception:
-                pass
+            except Exception as e:
+                log_error("系统", "引擎", f"广告轮询异常: {e}", self.account_id)
             await asyncio.sleep(600)
 
     # ——— 子模块编排 ———
@@ -540,11 +627,15 @@ class GameEngine:
                 await self.marriage_gift.run(status)
             elif self._marriage_partner_id:
                 intimacy = status.get("intimacy", 0)
+                info("系统", "引擎", f"未婚, 当前亲密度:{intimacy}", self.account_id)
                 await self.supply.ensure("flowers", 0)
                 result = await self.marriage_flowers.run(self._marriage_partner_id, intimacy)
                 intimacy = result.get("intimacy", intimacy)
                 if intimacy >= 100:
+                    info("系统", "引擎", "亲密度已满, 尝试求婚", self.account_id)
                     await self.marriage_proposal.run(status)
+            else:
+                pass  # 无伴侣，正常跳过
         except Exception as e:
             log_error("系统", "引擎", f"婚姻流程异常: {e}", self.account_id)
 
@@ -560,6 +651,7 @@ class GameEngine:
 
             status = await self.farm_status.get()
             if not status:
+                warn("农场", "农场", "获取农场状态失败，跳过此轮", self.account_id)
                 return
 
             is_premium = status.get("isPremium", False)
@@ -572,42 +664,64 @@ class GameEngine:
             vip_slot = status.get("vipSlotIndex", -1)
             unlocked = status.get("unlockedSlots", len(slots))
 
+            info("农场", "农场", f"Lv.{farm_level}, {unlocked}/{len(slots)}格, premium={is_premium}", self.account_id)
+
             # 1. Dig mature crops FIRST
             await self.farm_dig.run(slots, is_premium)
 
             # 2. Harvest
             ready = [s for s in slots if s.get("canHarvest")]
+            harvested_count = 0
             if ready:
                 if len(ready) == unlocked and is_premium:
                     r = await self.client.farm_harvest_all()
                     if r.get("success"):
+                        harvested_count = len(ready)
                         info("农场", "农场", f"一键收获 {len(ready)}块", self.account_id)
+                    else:
+                        warn("农场", "农场", "一键收获API失败，回退单块收", self.account_id)
+                        for slot in ready:
+                            r = await self.client.farm_harvest(slot["slotIndex"])
+                            if r.get("success"):
+                                harvested_count += 1
+                            await asyncio.sleep(0.8)
                 else:
                     for slot in ready:
                         r = await self.client.farm_harvest(slot["slotIndex"])
+                        if r.get("success"):
+                            harvested_count += 1
                         await asyncio.sleep(0.8)
+                info("农场", "农场", f"收获完成: {harvested_count}/{len(ready)}块", self.account_id)
 
             # 3. Remove withered
-            for slot in [s for s in slots if s.get("state") == "withered"]:
+            withered = [s for s in slots if s.get("state") == "withered"]
+            for slot in withered:
                 await self.client.farm_remove(slot["slotIndex"])
                 await asyncio.sleep(0.6)
+            if withered:
+                info("农场", "农场", f"铲除 {len(withered)} 个枯萎作物", self.account_id)
 
             # 4. Water own farm (daily limit: 5)
             care_done = status.get("todayCareCount", 0)
             if care_done < 5:
-                for slot in [s for s in slots if s.get("canCare")][:5 - care_done]:
+                dry = [s for s in slots if s.get("canCare")][:5 - care_done]
+                for slot in dry:
                     await self.client.farm_care(slot["slotIndex"])
                     await asyncio.sleep(0.5)
+                if dry:
+                    info("农场", "农场", f"浇水 {len(dry)}块 (今日{care_done + len(dry)}/5)", self.account_id)
 
             # 5. Smart plant
             empty = [s for s in slots if s.get("canPlant") or (s.get("state") in ("empty", None) and not s.get("cropId"))]
             if empty:
+                info("农场", "农场", f"播种 {len(empty)}个空位", self.account_id)
                 await self.farm_plant.run(slots, crops, collection, exp_val, is_premium, vip_slot, tasks, farm_level, self.db)
 
             # 6. Ad bonus
             ad = await self.client.farm_get_ad_status()
             if ad.get("success") and ad.get("data", {}).get("canClaim"):
                 await self.client.farm_claim_ad()
+                info("农场", "农场", "农场广告奖励已领取", self.account_id)
 
             # 7. Land upgrade
             await self.farm_land.run(status)
@@ -616,18 +730,28 @@ class GameEngine:
             log_error("系统", "引擎", f"农场异常: {e}", self.account_id)
 
     async def _run_farm_social(self):
-        """社交：偷菜+帮浇水。对齐旧引擎 autoSteal() + autoHelpFriends()"""
+        """社交：翻地+偷菜+帮浇水。对齐旧引擎 autoSteal() + autoHelpFriends()"""
         try:
             friends = await self.client.get_fightable_friends()
-            if not friends.get("success") or not friends.get("data"):
+            if not friends.get("success"):
+                warn("农场", "社交", "获取好友列表API失败", self.account_id)
                 return
-            for f in friends["data"]:
+            if not friends.get("data"):
+                return
+            friend_list = friends["data"]
+            for f in friend_list[:1]:  # 只处理第一个好友
                 fid = f.get("user_id") or f.get("userId")
-                if fid:
-                    stolen = await self.farm_steal.run(fid)
-                    await self.farm_care.water_friend(fid)
-                    if stolen > 0:
-                        await self._persist_steals()  # 偷到只更新偷菜计数
-                    break
+                if not fid:
+                    continue
+                info("农场", "社交", f"访问好友 {fid}", self.account_id)
+                # 翻地（翻别人的跟翻自己没区别，对方研究点/图鉴不涨）
+                dug = await self.farm_dig.dig_friend(fid)
+                if dug:
+                    info("农场", "社交", f"翻好友{fid}的地: {dug}块", self.account_id)
+                stolen = await self.farm_steal.run(fid)
+                await self.farm_care.water_friend(fid)
+                if stolen > 0:
+                    await self._persist_steals()
+                info("农场", "社交", f"好友{fid}: 翻地{dug}块 偷菜{stolen}次 (共{len(friend_list)}位好友)", self.account_id)
         except Exception as e:
             log_error("系统", "引擎", f"社交异常: {e}", self.account_id)

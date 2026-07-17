@@ -51,6 +51,7 @@ class Inventory:
             self._cache_time = now
             return self._cache
 
+        logger.warning("获取背包API失败，返回缓存数据")
         return self._cache or []
 
     async def refresh(self) -> list[dict]:

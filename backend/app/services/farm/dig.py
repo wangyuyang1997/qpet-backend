@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,9 @@ class FarmDig:
             result = await self._client.farm_explore_all()
             if result.get("success"):
                 count = result.get("data", {}).get("count", len(mature))
-                logger.info(f"[{self._account_id}] 一键翻地 {count}块")
+                info("农场", "翻地", f"一键翻地 {count}块", self._account_id)
                 return count
+            warn("农场", "翻地", "一键翻地API失败，回退单块翻", self._account_id)
 
         count = 0
         for slot in mature:
@@ -32,6 +34,8 @@ class FarmDig:
             if ok.get("success"):
                 count += 1
                 await asyncio.sleep(0.8)
+        if count:
+            info("农场", "翻地", f"翻地 {count}块", self._account_id)
         return count
 
     async def dig_friend(self, friend_id) -> int:

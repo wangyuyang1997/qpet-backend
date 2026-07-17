@@ -5,6 +5,7 @@ import random
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def start():
         return
     scheduler.start()
     _running = True
-    logger.info("全局调度器已启动")
+    info("系统", "调度器", "全局调度器已启动")
 
 
 def shutdown():
@@ -26,6 +27,7 @@ def shutdown():
     if _running:
         scheduler.shutdown(wait=False)
         _running = False
+        info("系统", "调度器", "全局调度器已关闭")
 
 
 def register_cron(callback, cron_expr: str, job_id: str, jitter: int = 0):
@@ -37,6 +39,7 @@ def register_cron(callback, cron_expr: str, job_id: str, jitter: int = 0):
         id=job_id,
         replace_existing=True,
     )
+    logger.info(f"注册cron任务: {job_id} ({cron_expr})")
 
 
 def register_interval(callback, seconds: int, job_id: str, jitter: int = 0):
@@ -47,10 +50,12 @@ def register_interval(callback, seconds: int, job_id: str, jitter: int = 0):
         id=job_id,
         replace_existing=True,
     )
+    logger.info(f"注册interval任务: {job_id} ({seconds}s)")
 
 
 def remove_job(job_id: str):
     try:
         scheduler.remove_job(job_id)
-    except Exception:
-        pass
+        logger.info(f"移除定时任务: {job_id}")
+    except Exception as e:
+        warn("系统", "调度器", f"移除任务失败: {job_id} {e}")

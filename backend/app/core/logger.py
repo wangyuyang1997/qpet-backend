@@ -1,7 +1,7 @@
-"""日志系统 — 入库 + 折叠 + SSE 推送，对齐旧 Node.js logger.js"""
+"""日志系统 — 入库 + 折叠 + SSE 推送 + 日切迁移，对齐旧 Node.js logger.js"""
 import logging
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy import text
 from app.config import settings
 
@@ -145,3 +145,52 @@ def error(category: str, module: str, message: str, account_id: str = "", data: 
 
 def action(category: str, module: str, message: str, account_id: str = ""):
     log("INFO", category, module, message, account_id, None)
+
+
+# ——— 日志日切迁移 ——— 对齐旧 Node.js database.js migrateLogsToHistory + cleanHistoryLogs
+
+def migrate_logs_to_history():
+    """将昨日及更早的日志从 logs 迁移到 logs_history，并清理 7 天前的历史。
+    对齐旧代码: 每日午夜 00:02 执行，启动时也执行一次。
+    """
+    eng = _get_engine()
+    if not eng:
+        return
+
+    today_str = date.today().isoformat()  # 'YYYY-MM-DD'
+    seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
+
+    try:
+        with eng.connect() as c:
+            # 1. 将旧日志从 logs 复制到 logs_history
+            result = c.execute(
+                text("""
+                    INSERT INTO logs_history (timestamp, level, category, module, message, data, account)
+                    SELECT timestamp, level, category, module, message, data, account
+                    FROM logs
+                    WHERE timestamp::date < :today
+                """),
+                {"today": today_str},
+            )
+            migrated = result.rowcount
+
+            # 2. 从 logs 中删除已迁移的行
+            if migrated:
+                c.execute(
+                    text("DELETE FROM logs WHERE timestamp::date < :today"),
+                    {"today": today_str},
+                )
+
+            # 3. 清理 logs_history 中 7 天前的数据
+            result2 = c.execute(
+                text("DELETE FROM logs_history WHERE timestamp::date <= :cutoff"),
+                {"cutoff": seven_days_ago},
+            )
+            purged = result2.rowcount
+
+            c.commit()
+
+            if migrated or purged:
+                _logger.info(f"日志日切完成: 迁移{migrated}条, 清理{purged}条(7天前)")
+    except Exception as e:
+        _logger.error(f"日志日切失败: {e}")

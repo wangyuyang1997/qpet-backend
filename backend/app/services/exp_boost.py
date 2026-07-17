@@ -3,6 +3,7 @@ import logging
 from app.services.qpet_client import QPetClient
 from app.services.inventory import Inventory
 from app.services.config_service import ConfigService
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class ExpBoost:
         """经验 BUFF 次数 ≤ threshold 时从背包补充"""
         char = await self._client.get_character()
         if not char.get("success"):
+            warn("乐斗", "补给", "获取角色信息失败(经验药水检查)", self._account_id)
             return False
 
         data = char.get("data", {})
@@ -33,7 +35,8 @@ class ExpBoost:
 
         result = await self._inventory.use_by_name("经验")
         if result and result.get("success"):
-            logger.info(f"[{self._account_id}] 经验药水补充成功 (剩余{charges}次)")
+            info("乐斗", "补给", f"经验药水补充成功 (剩余{charges}次)", self._account_id)
             return True
 
+        warn("乐斗", "补给", "经验药水补充失败 (背包无药水或API失败)", self._account_id)
         return False

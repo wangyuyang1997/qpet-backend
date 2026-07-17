@@ -12,6 +12,9 @@ _client: Optional[aioredis.Redis] = None
 # 内存兜底：Redis 不可用时用 dict 存储 session（开发/单机环境）
 _mem_sessions: dict[str, dict] = {}
 _mem_ttl: dict[str, float] = {}
+# 续期降频：每5分钟最多续一次
+_extend_at: dict[str, float] = {}
+_extend_interval = 300
 
 
 def _redis_ok() -> bool:
@@ -74,6 +77,13 @@ async def session_delete(token: str):
 
 
 async def session_extend(token: str, ttl_hours: int = 12):
+    # 降频：每5分钟最多续一次，减少远程Redis写次数
+    now = time.time()
+    last = _extend_at.get(token, 0)
+    if now - last < _extend_interval:
+        return
+    _extend_at[token] = now
+
     if _redis_ok():
         await _client.expire(f"session:{token}", ttl_hours * 3600)
         return

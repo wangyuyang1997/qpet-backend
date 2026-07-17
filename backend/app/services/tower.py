@@ -3,7 +3,7 @@ import logging
 from app.services.qpet_client import QPetClient
 from app.services.config_service import ConfigService
 from app.services.item_supply import ItemSupply
-from app.core.logger import action as log_action
+from app.core.logger import action as log_action, warn, info
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ class Tower:
     async def run(self) -> dict:
         status = await self._client.get_tower_status()
         if not status.get("success"):
+            warn("乐斗", "爬塔", "获取爬塔状态API失败", self._account_id)
             return {"ok": False, "reason": "获取塔状态失败"}
 
         data = status.get("data", {})
@@ -60,17 +61,23 @@ class Tower:
                 log_action("乐斗", "爬塔", f"第{max_floor}层(还魂): {'胜' if exp > 0 else '败'} +{exp}EXP", self._account_id)
                 revive_count -= 1
 
+        if results["free_used"] or results["revive_used"]:
+            info("乐斗", "爬塔", f"爬塔完成: 免费{results['free_used']}次 还魂{results['revive_used']}次 +{results['total_exp']}EXP", self._account_id)
+
         return {"ok": True, **results}
 
     async def _do_floor(self, floor: int, use_revive: bool) -> tuple[bool, int]:
         result = await self._client.prepare_tower(floor, use_revive)
         if not result.get("success"):
+            warn("乐斗", "爬塔", f"准备第{floor}层失败", self._account_id)
             return False, 0
         battle_token = result.get("data", {}).get("battleToken", "")
         if not battle_token:
+            warn("乐斗", "爬塔", f"第{floor}层缺少battleToken", self._account_id)
             return False, 0
         settle = await self._client.settle_tower(battle_token, True)
         if settle.get("success"):
             exp = settle.get("data", {}).get("exp", 0) or settle.get("data", {}).get("expGained", 0) or 0
             return True, exp
+        warn("乐斗", "爬塔", f"第{floor}层结算失败", self._account_id)
         return False, 0

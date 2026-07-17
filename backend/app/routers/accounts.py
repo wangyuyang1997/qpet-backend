@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.auth_middleware import get_current_user
 from app.core.redis import cache_get, cache_set
+from app.core.logger import action, info, warn
 from app.services.account_manager import list_accounts as get_all_accounts
 from app.services.engine import get_engine, get_or_create_engine
 from app.services.farm.query import FarmQuery
@@ -69,6 +70,14 @@ async def list_accounts(
 async def get_account_farm(account_id: str, _user: dict = Depends(get_current_user)):
     cache_key = f"qpet:{account_id}:farm"
 
+    # 先查 Redis 缓存
+    cached = await cache_get(cache_key)
+    if cached:
+        try:
+            return {"success": True, "data": json.loads(cached)}
+        except Exception:
+            pass
+
     # 农场计数统一从 daily_records 查表，与引擎是否在线无关
     from datetime import date
     from sqlalchemy import select
@@ -96,20 +105,20 @@ async def get_account_farm(account_id: str, _user: dict = Depends(get_current_us
 
     engine = get_engine(account_id)
     if not engine or not engine.farm_status:
-        # 引擎不在线也返回计数器，前端至少能看到数据
-        return {"success": True, "data": db_counts}
-
-    status = await engine.farm_status.get()
-    if not status:
-        return {"success": True, "data": db_counts}
-
-    status.update(db_counts)
+        data = db_counts
+    else:
+        status = await engine.farm_status.get()
+        if status:
+            status.update(db_counts)
+            data = status
+        else:
+            data = db_counts
 
     try:
-        await cache_set(cache_key, json.dumps(status), 60)
+        await cache_set(cache_key, json.dumps(data), 60)
     except Exception:
         pass
-    return {"success": True, "data": status}
+    return {"success": True, "data": data}
 
 
 @router.get("/{account_id}/equipment")
@@ -158,9 +167,15 @@ async def get_account_sso(account_id: str, _user: dict = Depends(get_current_use
     if not engine or not engine.client:
         return {"success": False, "message": "引擎未运行"}
 
+    jwk = getattr(engine.client, '_ecdsa_jwk', None)
+    if not jwk and engine.client.private_key:
+        from app.core.crypto import export_public_jwk
+        engine.client._ecdsa_jwk = export_public_jwk(engine.client.private_key)
+        jwk = engine.client._ecdsa_jwk
+
     return {"success": True, "data": {
         "token": engine.client.token or "",
-        "jwk": engine.client._ecdsa_jwk or {},
+        "jwk": jwk or {},
     }}
 
 
@@ -173,7 +188,9 @@ async def start_account(account_id: str, _user: dict = Depends(get_current_user)
         return {"success": True, "message": "已在运行中"}
     ok = await engine.start()
     if not ok:
+        warn("系统", "管理", f"引擎启动失败: {account_id}", account_id)
         return {"success": False, "message": "引擎启动失败，请检查账号凭证是否有效"}
+    action("系统", "管理", f"用户手动启动引擎: {account_id}", account_id)
     return {"success": True, "message": "引擎已启动"}
 
 
@@ -183,6 +200,7 @@ async def stop_account(account_id: str, _user: dict = Depends(get_current_user))
     if not engine or not engine._running:
         return {"success": False, "message": "引擎未运行"}
     await engine.stop()
+    action("系统", "管理", f"用户手动停止引擎: {account_id}", account_id)
     return {"success": True, "message": "引擎已停止"}
 
 
@@ -236,6 +254,7 @@ async def update_credentials(account_id: str, body: dict, db: AsyncSession = Dep
         row.password = encrypt_password(body["password"])
 
     await db.commit()
+    info("系统", "管理", f"凭证已更新: {account_id}", account_id)
 
     # 如果引擎在运行，更新内存中的凭证 + 重置密钥对
     engine = get_engine(account_id)
@@ -263,7 +282,9 @@ async def regenerate_key(account_id: str, _user: dict = Depends(get_current_user
     engine.client.delete_key()
     ok = await engine.client.ensure_ecdsa_ready()
     if ok:
+        action("系统", "管理", f"ECDSA密钥已重新生成: {account_id}", account_id)
         return {"success": True, "message": "ECDSA 密钥已重新生成并注册"}
+    warn("系统", "管理", f"密钥生成失败: {account_id}", account_id)
     return {"success": False, "message": "密钥生成失败"}
 
 
@@ -304,4 +325,5 @@ async def trigger_action(account_id: str, action: str, _user: dict = Depends(get
     else:
         return {"success": False, "message": f"未知操作: {action}"}
 
+    info("系统", "管理", f"用户手动触发: {action}", account_id)
     return {"success": True, "message": f"{action} 已触发"}

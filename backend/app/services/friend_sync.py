@@ -1,6 +1,7 @@
 """好友同步 — 托管账号间互加，6小时冷却"""
 import logging
 from app.services.qpet_client import QPetClient
+from app.core.logger import info, warn
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class FriendSync:
         """返回新增好友数"""
         friends = await self._client.get_friends()
         if not friends.get("success"):
+            warn("乐斗", "好友", "获取好友列表API失败", self._account_id)
             return 0
         existing_ids = {f.get("userId") or f.get("id") for f in friends.get("data", []) or []}
 
@@ -36,11 +38,12 @@ class FriendSync:
             if peer_id in existing_ids:
                 continue
             if peer_id in pending_ids:
-                await self._client.accept_friend(peer_id)
-                added += 1
+                ok = await self._client.accept_friend(peer_id)
+                if ok.get("success"):
+                    added += 1
             else:
                 await self._client.request_friend(peer_id)
 
         if added:
-            logger.info(f"[{self._account_id}] 好友同步 +{added}")
+            info("乐斗", "好友", f"好友同步 +{added}", self._account_id)
         return added
