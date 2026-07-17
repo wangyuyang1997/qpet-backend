@@ -123,6 +123,7 @@ class GameEngine:
         self._character_cache: dict = {}
         self._marriage_partner_id: str | None = None
         self._farm_cycle_index = 0
+        self._abyss_tickets = 0
         # 风控检测 对齐旧引擎 checkRateLimited / setFarmRateLimit
         self._rate_limit_hits = 0
         self._rate_limit_until = 0.0
@@ -271,7 +272,7 @@ class GameEngine:
             warn("系统", "引擎", "角色刷新API返回失败", self.account_id)
 
     async def _sync_inventory_to_db(self):
-        """同步背包数据入库（先删后插）"""
+        """同步背包数据入库（先删后插），同时缓存深渊票数量"""
         try:
             inv = await self.client.get_inventory()
             if not inv.get("success"):
@@ -285,6 +286,12 @@ class GameEngine:
             from app.core.database import AsyncSessionLocal
             sync = FarmSync(AsyncSessionLocal)
             await sync._sync_inventory(self.account_id, items)
+            # 缓存深渊票数量
+            self._abyss_tickets = 0
+            for it in items:
+                if (it.get("item_name") or it.get("name") or "") == "深渊票":
+                    self._abyss_tickets = it.get("quantity", 0)
+                    break
             info("系统", "引擎", f"背包同步完成 ({len(items)}件)", self.account_id)
         except Exception as e:
             log_error("系统", "引擎", f"背包同步异常: {e}", self.account_id)
@@ -501,18 +508,12 @@ class GameEngine:
         today = date.today()
         # Gather available status data
         tower_status = {}
-        gang_boss_status = {}
         farm_status = {}
         try:
             tower_status = await self.client.get_tower_status()
             tower_status = tower_status.get("data", {}) if tower_status.get("success") else {}
         except Exception as e:
             warn("系统", "引擎", f"获取爬塔状态失败: {e}", self.account_id)
-        try:
-            gang_boss_status = await self.client.get_gang_boss_status()
-            gang_boss_status = gang_boss_status.get("data", {}) if gang_boss_status.get("success") else {}
-        except Exception as e:
-            warn("系统", "引擎", f"获取帮派BOSS状态失败: {e}", self.account_id)
         try:
             farm_status = await self.farm_status.get() or {}
         except Exception as e:
@@ -523,7 +524,12 @@ class GameEngine:
             "npc_fights": getattr(self.npc, "today_count", 0) if self.npc else 0,
             "tower_floors": tower_status.get("todayFloors", 0),
             "tower_max": tower_status.get("maxFloor", 0),
-            "gang_contribution": await self._get_gang_contrib(),
+            "gang_contribution": getattr(self.gang_boss, "today_contrib", 0),
+            "gang_boss_fights": getattr(self.gang_boss, "today_fights", 0),
+            "gang_challenge_books": getattr(self.gang_boss, "challenge_books", 0),
+            "tower_revive": getattr(self, "_tower_revive", 0),
+            "flowers_remaining": getattr(self.shop_special, "flower_stock", 0),
+            "abyss_tickets": self._abyss_tickets,
             "plants": getattr(self.farm_plant, "_planted", 0) if self.farm_plant else 0,
             "harvests": farm_status.get("todayHarvests", 0),
             "steals": await self._get_steal_count(),
@@ -551,7 +557,7 @@ class GameEngine:
                 "level": char.get("level", 0),
                 "class_name": char.get("className", ""),
                 "combat_power": char.get("combatPower", 0),
-                "current_exp": char.get("experience", 0),
+                "current_exp": char.get("exp", char.get("experience", 0)),
                 "level_exp": char.get("exp", 0),
                 "level_exp_max": char.get("expToNext", 0),
                 "stamina": char.get("stamina", 0),
@@ -761,6 +767,15 @@ class GameEngine:
             # 7. Land upgrade
             await self.farm_land.run(status)
 
+            # 8. Sync collection/museum/land to DB
+            try:
+                from app.services.farm.sync import FarmSync
+                from app.core.database import AsyncSessionLocal
+                sync = FarmSync(AsyncSessionLocal)
+                await sync.sync_all(self.account_id, status)
+            except Exception as e:
+                log_error("系统", "引擎", f"农场数据同步DB异常: {e}", self.account_id)
+
         except Exception as e:
             log_error("系统", "引擎", f"农场异常: {e}", self.account_id)
 
@@ -771,7 +786,7 @@ class GameEngine:
         try:
             friends = await self.client.get_fightable_friends()
             if not friends.get("success"):
-                warn("农场", "社交", "获取好友列表API失败", self.account_id)
+                warn("农场", "社交", f"获取好友列表API失败: {friends.get('message', '未知错误')}", self.account_id)
                 return
             if not friends.get("data"):
                 return

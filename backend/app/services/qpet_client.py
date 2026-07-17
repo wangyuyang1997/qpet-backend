@@ -230,7 +230,6 @@ class QPetClient:
     async def propose_marriage(self): return await self.api_call("POST", "/qpet/social/marriage/propose")
     async def respond_marriage(self, accept: bool): return await self.api_call("POST", "/qpet/social/marriage/respond", {"accept": accept})
     async def send_friend_flower(self, target_user_id): return await self.api_call("POST", "/qpet/social/friend/flower", {"targetUserId": target_user_id})
-    async def get_friends(self): return await self.api_call("GET", "/qpet/friends")
     async def get_fightable_friends(self): return await self.api_call("GET", "/qpet/battle/friends")
     async def get_friend_requests(self): return await self.api_call("GET", "/qpet/social/friends/requests")
     async def accept_friend(self, user_id): return await self.api_call("POST", f"/qpet/social/friends/accept/{user_id}")

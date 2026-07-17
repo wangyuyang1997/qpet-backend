@@ -1,6 +1,6 @@
 """道具补给 — 根据配置阈值自动从背包移入库存"""
 import logging
-from datetime import date
+import time
 from app.services.qpet_client import QPetClient
 from app.services.inventory import Inventory
 from app.services.config_service import ConfigService
@@ -15,6 +15,8 @@ SUPPLY_CONFIG = {
     "beads":          {"name": "魂珠",     "config_key": "supply_beads"},
 }
 
+COOLDOWN_SECONDS = 1
+
 
 class ItemSupply:
     """每账号一个实例，背包 → 库存统一入口"""
@@ -25,23 +27,24 @@ class ItemSupply:
         self._config = config_svc
         self._account_id = account_id
         self.challenge_used = 0
-        self._failed: dict[str, str] = {}  # item_key → date
+        self._last_fail: dict[str, float] = {}
 
     async def ensure(self, item_key: str, current_stock: int, threshold: int = 0) -> bool:
         """
         检查开关 → 比较库存 → 从背包移入
         返回 True 表示执行了补给
         """
-        today = date.today().isoformat()
-        if self._failed.get(item_key) == today:
-            return False
-
         rule = SUPPLY_CONFIG.get(item_key)
         if not rule:
             logger.warning(f"未知补给项: {item_key}")
             return False
 
         if current_stock > threshold:
+            return True  # 仓库库存充足，无需从背包转移
+
+        # 短时间内失败过则跳过，防频繁调用
+        last_fail = self._last_fail.get(item_key, 0)
+        if last_fail and (time.monotonic() - last_fail) < COOLDOWN_SECONDS:
             return False
 
         enabled = await self._config.get_bool(self._account_id, rule["config_key"])
@@ -50,11 +53,10 @@ class ItemSupply:
 
         result = await self._inventory.use_by_name(rule["name"])
         if result and result.get("success"):
-            self._failed.pop(item_key, None)
             info("乐斗", "补给", f"补给 {rule['name']} 成功", self._account_id)
             if item_key == "challenge_book":
                 self.challenge_used += 1
             return True
 
-        self._failed[item_key] = today
+        self._last_fail[item_key] = time.monotonic()
         return False

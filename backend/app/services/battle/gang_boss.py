@@ -17,6 +17,7 @@ class GangBoss:
         self._account_id = account_id
         self.today_count = 0
         self.today_contrib = 0
+        self.challenge_books = 0
 
     async def run(self) -> dict:
         status = await self._client.get_gang_boss_status()
@@ -27,11 +28,13 @@ class GangBoss:
         data = status.get("data", {})
         bosses = data.get("bossList", [])
 
-        # 从API同步今日贡献（重启不丢，不用本地计数）
+        # 从API同步今日贡献 + 战斗次数 + 剩余挑战书（供 _persist_daily 使用）
         total_contrib = 0
         for boss in bosses:
             total_contrib += boss.get("todayContribEarned", 0) or 0
         self.today_contrib = total_contrib
+        self.today_fights = total_contrib // 10
+        self.challenge_books = data.get("challengeBookCount", 0)
 
         used = 0
 
@@ -47,15 +50,16 @@ class GangBoss:
                 if ok:
                     used += 1
 
-        # 挑战书：用在最高等级BOSS上，一次循环用多本（每日上限15次）
+        # 挑战书：用在最高等级BOSS上，一次循环用多本
         top_boss = unlocked[-1]
-        daily_limit = data.get("dailyLimit", 15)
-        remaining = daily_limit - (data.get("todayCount", 0) or 0) - used
-        while remaining > 0 and await self._supply.ensure("challenge_book", 0):
+        daily_limit = data.get("dailyChallengeLimit", 15)
+        remaining = daily_limit - self.today_fights
+        while remaining > 0 and await self._supply.ensure("challenge_book", self.challenge_books):
             ok = await self._do_boss(top_boss.get("id"))
             if ok:
                 used += 1
                 remaining -= 1
+                self.challenge_books = max(0, self.challenge_books - 1)
             else:
                 break  # prepare/settle失败，不再继续
 

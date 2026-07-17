@@ -24,17 +24,34 @@ class ClassUpgrade:
 
         # 不自动选职业 — 用户手动选
 
-        # 分配技能
+        # 分配技能 — 对齐旧引擎：先看有没有SP → 被动优先 → 低tier优先 → 低cost优先
+        sp = data.get("skillPoints", 0)
+        if sp <= 0:
+            return results
+
         tree = await self._client.get_skill_tree()
         if tree.get("success"):
             nodes = tree.get("data", {}).get("skillTree", [])
-            for node in nodes:
-                if node.get("canAllocate", False):
+            remaining = tree.get("data", {}).get("skillPoints", sp)
+            if remaining > 0 and nodes:
+                allocatable = [n for n in nodes if n.get("canAllocate", False)]
+                allocatable.sort(key=lambda n: (
+                    0 if n.get("type") == "passive" else 1,
+                    n.get("tier", 99),
+                    n.get("spCost", 1),
+                ))
+                for node in allocatable:
+                    if remaining <= 0:
+                        break
+                    cost = node.get("spCost", 1)
+                    if remaining < cost:
+                        continue
                     result = await self._client.allocate_skill(node.get("id"))
                     if result.get("success"):
+                        remaining -= cost
                         results["skills_allocated"] += 1
                         name = node.get("name", "?")
-                        log_action("乐斗", "修炼", f"分配技能点: {name}", self._account_id)
+                        log_action("乐斗", "修炼", f"分配技能点: {name}" + (f" ({cost}SP)" if cost > 1 else ""), self._account_id)
                     else:
                         warn("乐斗", "修炼", f"分配技能失败: {node.get('name', '?')}", self._account_id)
         else:

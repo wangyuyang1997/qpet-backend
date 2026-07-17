@@ -17,11 +17,11 @@ class FriendSync:
 
     async def run(self) -> int:
         """返回新增好友数"""
-        friends = await self._client.get_friends()
+        friends = await self._client.get_fightable_friends()
         if not friends.get("success"):
-            warn("乐斗", "好友", "获取好友列表API失败", self._account_id)
+            warn("乐斗", "好友", f"获取好友列表API失败: {friends.get('message', '未知错误')}", self._account_id)
             return 0
-        existing_ids = {f.get("userId") or f.get("id") for f in friends.get("data", []) or []}
+        existing_ids = {f.get("userId") or f.get("id") or f.get("user_id") for f in friends.get("data", []) or []}
 
         # 检查待处理请求
         requests = await self._client.get_friend_requests()

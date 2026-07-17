@@ -237,6 +237,122 @@ async def get_land_status(account_id: str, _user: dict = Depends(get_current_use
     return {"success": True, "data": data}
 
 
+@router.post("/{account_id}/sync-farm")
+async def sync_farm_data(account_id: str, _user: dict = Depends(get_current_user)):
+    """手动触发农场数据同步：调游戏API获取最新museum/collection/land，写入DB"""
+    from app.services.farm.sync import FarmSync
+    from app.services.farm.query import FarmQuery
+
+    engine = get_engine(account_id)
+    if not engine or not engine.farm_status:
+        return {"success": False, "message": "引擎未运行，无法获取农场数据"}
+
+    status = await engine.farm_status.get()
+    if not status:
+        return {"success": False, "message": "获取农场状态失败"}
+
+    sync = FarmSync(AsyncSessionLocal)
+    result = await sync.sync_all(account_id, status)
+
+    return {
+        "success": True,
+        "message": f"museum:{result['museum']} collection:{result['collection']} land:{result['land']}",
+        "data": result,
+    }
+
+
+@router.post("/{account_id}/sync-daily")
+async def sync_daily_record(account_id: str, _user: dict = Depends(get_current_user)):
+    """手动触发每日记录持久化：刷新角色快照+计数器写入daily_records"""
+    engine = get_engine(account_id)
+    if not engine or not engine._running:
+        return {"success": False, "message": "引擎未运行"}
+
+    # 确保客户端就绪
+    if not getattr(engine.client, 'private_key', None):
+        await engine.client.ensure_ecdsa_ready()
+
+    diag = {}
+
+    # 背包同步（更新深渊票等缓存）
+    await engine._sync_inventory_to_db()
+
+    # 帮派BOSS状态（更新今日次数+贡献，次数=贡献/10）
+    try:
+        gb = await engine.client.get_gang_boss_status()
+        if gb.get("success") and gb.get("data"):
+            d = gb["data"]
+            contrib = sum(
+                b.get("todayContribEarned", 0) or 0 for b in d.get("bossList", [])
+            )
+            engine.gang_boss.today_contrib = contrib
+            engine.gang_boss.today_fights = contrib // 10
+            engine.gang_boss.challenge_books = d.get("challengeBookCount", 0)
+    except Exception:
+        pass
+
+    # 社区广告次数
+    try:
+        ad = await engine.client.community_get_ad_status()
+        if ad.get("success") and ad.get("data"):
+            engine.ad_community.today_count = ad["data"].get("todayCount", 0)
+        else:
+            engine.ad_community.today_count = 0
+    except Exception:
+        engine.ad_community.today_count = 0
+
+    # 挑战书购买次数
+    try:
+        shop = await engine.client.get_shop_status()
+        if shop.get("success") and shop.get("data"):
+            cb = shop["data"].get("challenge_book", {}) or {}
+            engine.shop_special.today_count = cb.get("used", 0) or 0
+        else:
+            engine.shop_special.today_count = 0
+    except Exception:
+        engine.shop_special.today_count = 0
+
+    # 还魂丹（塔状态 API）
+    try:
+        tower = await engine.client.get_tower_status()
+        if tower.get("success") and tower.get("data"):
+            engine._tower_revive = tower["data"].get("reviveCount", 0)
+    except Exception:
+        pass
+
+    # 仓库鲜花（商店API — flower.flowerStock）
+    try:
+        shop = await engine.client.get_shop_status()
+        if shop.get("success") and shop.get("data"):
+            flower = shop["data"].get("flower", {}) or {}
+            engine.shop_special.flower_stock = flower.get("flowerStock", 0)
+    except Exception:
+        pass
+
+    # 广告次数（从各广告API同步真实计数）
+    try:
+        sa = await engine.client.get_ad_stamina_status()
+        if sa.get("success") and sa.get("data"):
+            engine.ad_stamina.today_count = sa["data"].get("todayCount", 0)
+    except Exception:
+        pass
+    try:
+        fa = await engine.client.farm_get_ad_status()
+        if fa.get("success") and fa.get("data"):
+            engine.ad_farm.today_count = fa["data"].get("todayCount", 0)
+    except Exception:
+        pass
+    try:
+        ca = await engine.client.community_get_ad_status()
+        if ca.get("success") and ca.get("data"):
+            engine.ad_community.today_count = ca["data"].get("todayCount", 0)
+    except Exception:
+        pass
+
+    await engine._persist_daily()
+    return {"success": True, "message": "每日记录已同步", "diag": diag}
+
+
 @router.put("/{account_id}/credentials")
 async def update_credentials(account_id: str, body: dict, db: AsyncSession = Depends(get_db), _user: dict = Depends(get_current_user)):
     """更新账号的用户名和密码"""

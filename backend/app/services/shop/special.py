@@ -28,6 +28,10 @@ class ShopSpecial:
         cb = data.get("challenge_book", {})
         self.today_count = cb.get("used", 0) or 0
 
+        # 鲜花库存（供 _persist_daily 使用）
+        flower = data.get("flower", {}) or {}
+        self.flower_stock = flower.get("flowerStock", 0)
+
         bought = 0
         for item_key, cfg in SHOP_ITEMS.items():
             info = data.get(item_key, {})
