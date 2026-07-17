@@ -388,6 +388,19 @@ class GameEngine:
 
             # gang → /accounts/{id}/gang
             await cache("gang", lambda: self.client.get_gang_status())
+            # gang-boss → /accounts/{id}/gang-boss
+            await cache("gang-boss", lambda: self.client.get_gang_boss_status())
+            # 帮派数据持久化
+            try:
+                from app.services.gang_sync import GangSync
+                from app.core.database import AsyncSessionLocal
+                gs = GangSync(AsyncSessionLocal)
+                gd = await self.client.get_gang_status()
+                bd = await self.client.get_gang_boss_status()
+                if gd.get("success"):
+                    await gs.sync_all(self.account_id, gd.get("data", {}), bd)
+            except Exception:
+                pass
 
             # farm → /accounts/{id}/farm
             await cache("farm", lambda: self._fetch_farm_data())

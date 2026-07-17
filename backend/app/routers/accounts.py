@@ -121,6 +121,103 @@ async def get_account_farm(account_id: str, _user: dict = Depends(get_current_us
     return {"success": True, "data": data}
 
 
+@router.get("/{account_id}/gang-boss")
+async def get_account_gang_boss(account_id: str, _user: dict = Depends(get_current_user)):
+    data = await _redis_or_fetch(account_id, "gang-boss", lambda c: c.get_gang_boss_status())
+    if data is None:
+        return {"success": False, "message": "引擎未运行或获取帮派BOSS失败"}
+    return {"success": True, "data": data}
+
+
+@router.get("/{account_id}/gang-status")
+async def get_gang_status_db(account_id: str, _user: dict = Depends(get_current_user)):
+    """从DB读取帮派持久化数据（帮派信息+技能+BOSS+成员）"""
+    from sqlalchemy import select
+    from app.models.gang_member import GangMember
+    from app.models.gang_status import GangStatus
+    from app.models.gang_skill import GangSkill
+    from app.models.gang_skill_config import GangSkillConfig
+    from app.models.gang_boss import GangBoss
+    from app.models.gang_boss_config import GangBossConfig
+
+    db = AsyncSessionLocal()
+    try:
+        # 先查该account对应的gang_id
+        member_row = await db.execute(
+            select(GangMember).where(GangMember.account_id == account_id)
+        )
+        member = member_row.scalar_one_or_none()
+        if not member:
+            return {"success": False, "message": "未加入帮派或数据未同步"}
+
+        gid = member.gang_id
+
+        # 帮派状态
+        gang_row = await db.execute(select(GangStatus).where(GangStatus.gang_id == gid))
+        gang = gang_row.scalar_one_or_none()
+
+        # 技能
+        skills_row = await db.execute(
+            select(GangSkill, GangSkillConfig)
+            .join(GangSkillConfig, GangSkill.skill_name == GangSkillConfig.name)
+            .where(GangSkill.gang_id == gid)
+            .order_by(GangSkillConfig.sort_order)
+        )
+        skills = [
+            {"name": s.skill_name, "level": s.current_level,
+             "description": cfg.description, "max_level": cfg.max_level,
+             "cost_per_level": cfg.cost_per_level, "min_gang_level": cfg.min_gang_level,
+             "hp_per_level": cfg.hp_per_level, "atk_per_level": cfg.atk_per_level}
+            for s, cfg in skills_row.all()
+        ]
+
+        # BOSS
+        bosses_row = await db.execute(
+            select(GangBoss, GangBossConfig)
+            .join(GangBossConfig, GangBoss.boss_id == GangBossConfig.boss_id)
+            .where(GangBoss.gang_id == gid)
+            .order_by(GangBossConfig.sort_order)
+        )
+        bosses = [
+            {"boss_id": b.boss_id, "name": cfg.name, "boss_level": cfg.boss_level,
+             "min_gang_level": cfg.min_gang_level,
+             "unlocked": b.unlocked, "free_challenge_done": b.free_challenge_done}
+            for b, cfg in bosses_row.all()
+        ]
+
+        # 成员
+        members_row = await db.execute(
+            select(GangMember).where(GangMember.gang_id == gid)
+            .order_by(GangMember.contribution.desc())
+        )
+        members = [
+            {"user_id": m.user_id, "nickname": m.nickname, "role": m.role,
+             "contribution": m.contribution, "account_id": m.account_id}
+            for m in members_row.scalars().all()
+        ]
+
+        return {"success": True, "data": {
+            "gang_id": gid,
+            "name": gang.name if gang else "",
+            "level": gang.level if gang else 1,
+            "notice": gang.notice if gang else "",
+            "accumulated_contribution": gang.accumulated_contribution if gang else 0,
+            "guardian_level": gang.guardian_level if gang else 0,
+            "member_count": gang.member_count if gang else 0,
+            "next_level": gang.next_level if gang else 0,
+            "next_need_contrib": gang.next_need_contrib if gang else 0,
+            "next_member_limit": gang.next_member_limit if gang else 0,
+            "level_progress": gang.level_progress if gang else 0,
+            "my_role": member.role,
+            "my_contribution": member.contribution,
+            "skills": skills,
+            "bosses": bosses,
+            "members": members,
+        }}
+    finally:
+        await db.close()
+
+
 @router.get("/{account_id}/equipment")
 async def get_account_equipment(account_id: str, _user: dict = Depends(get_current_user)):
     data = await _redis_or_fetch(account_id, "equipment", lambda c: c.get_equipment())
@@ -351,6 +448,37 @@ async def sync_daily_record(account_id: str, _user: dict = Depends(get_current_u
 
     await engine._persist_daily()
     return {"success": True, "message": "每日记录已同步", "diag": diag}
+
+
+@router.post("/{account_id}/sync-gang")
+async def sync_gang_data(account_id: str, _user: dict = Depends(get_current_user)):
+    """手动触发帮派数据同步：拉取帮派状态+BOSS数据，写入gang_status等6表"""
+    engine = get_engine(account_id)
+    if not engine or not engine._running:
+        return {"success": False, "message": "引擎未运行"}
+
+    if not getattr(engine.client, 'private_key', None):
+        await engine.client.ensure_ecdsa_ready()
+
+    from app.services.gang_sync import GangSync
+    from app.core.database import AsyncSessionLocal
+
+    gang = await engine.client.get_gang_status()
+    if not gang.get("success"):
+        return {"success": False, "message": "获取帮派状态失败"}
+
+    boss = await engine.client.get_gang_boss_status()
+
+    sync = GangSync(AsyncSessionLocal)
+    result = await sync.sync_all(account_id, gang.get("data", {}), boss)
+
+    # 更新 member_count
+    member_count = len(gang.get("data", {}).get("members", []))
+    return {
+        "success": True,
+        "message": f"帮派同步完成: {result['gang']} {result['skills']}技能 {result['bosses']}BOSS {member_count}成员",
+        "data": result,
+    }
 
 
 @router.put("/{account_id}/credentials")
