@@ -550,6 +550,17 @@ async def get_credentials(account_id: str, _user: dict = Depends(get_current_use
         }}
 
 
+@router.post("/{account_id}/refresh-marriage")
+async def refresh_marriage(account_id: str, _user: dict = Depends(get_current_user)):
+    """触发婚姻状态刷新 + 返回完整婚姻信息"""
+    engine = get_engine(account_id)
+    if not engine or not engine._running:
+        return {"success": False, "message": "引擎未运行"}
+
+    info = await engine._get_marriage_info()
+    return {"success": True, "data": info}
+
+
 @router.post("/{account_id}/{action}")
 async def trigger_action(account_id: str, action: str, _user: dict = Depends(get_current_user)):
     engine = get_engine(account_id)

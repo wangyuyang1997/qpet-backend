@@ -122,7 +122,7 @@ class GameEngine:
 
         self._character_cache: dict = {}
         self._profile_cache: dict = {}
-        self._marriage_partner_id: str | None = None
+        self._marriage_partner_id: str | None = None  # 已婚=伴侣ID, 未婚=要追求的目标ID
         self._farm_cycle_index = 0
         self._abyss_tickets = 0
         # 风控检测 对齐旧引擎 checkRateLimited / setFarmRateLimit
@@ -234,7 +234,11 @@ class GameEngine:
             char = await self.client.get_character()
             if char.get("success"):
                 self._character_cache = char.get("data", {})
+                # 未婚时从配置读取追求目标，已婚用游戏API的marriagePartnerId
                 self._marriage_partner_id = self._character_cache.get("marriagePartnerId")
+                if not self._marriage_partner_id and self.config:
+                    cfg_partner = await self.config.get_value(self.account_id, "marriage_partner")
+                    self._marriage_partner_id = cfg_partner or None
                 self.mgr.nickname = self._character_cache.get("nickname", self.mgr.nickname)
                 self.mgr.level = self._character_cache.get("level", self.mgr.level)
                 self.mgr.class_name = self._character_cache.get("className", self.mgr.class_name)
@@ -736,6 +740,44 @@ class GameEngine:
             await asyncio.sleep(600)
 
     # ——— 子模块编排 ———
+
+    async def _get_marriage_info(self) -> dict:
+        """返回完整婚姻信息供前端展示"""
+        char = self._character_cache
+        status = await self.marriage_status.get()
+        partner = status.get("partner", {}) or {}
+        info: dict = {
+            "married": status.get("married", False),
+            "partnerName": partner.get("pet_name") or partner.get("nickname", ""),
+            "partnerLevel": partner.get("level", 0),
+            "partnerUserId": status.get("partnerUserId", ""),
+            "intimacy": status.get("intimacy", 0),
+            "todayGiftSent": status.get("todayGiftSent", 0),
+            "todayBossDone": status.get("todayBossDone", False),
+            "marriage_hp": char.get("bonus_marriage_hp", 0),
+            "marriage_atk": char.get("bonus_marriage_atk", 0),
+            "marriage_hp_applied": char.get("marriage_hp_applied", 0),
+            "disciple_hp": char.get("disciple_hp_bonus", 0),
+            "gang_hp": char.get("bonus_gang_hp", 0),
+            "gang_atk": char.get("bonus_gang_atk", 0),
+        }
+        if info["married"]:
+            # 婚姻技能
+            skills_raw = char.get("skills", [])
+            marriage_skill_names = ["情比金坚", "神雕侠侣", "生死相随"]
+            info["marriage_skills"] = [
+                {"name": s.get("name"), "level": s.get("level", 1)}
+                for s in skills_raw if s.get("name") in marriage_skill_names
+            ]
+        else:
+            # 未婚：返回伴侣绑定状态
+            info["target_partner_id"] = self._marriage_partner_id or ""
+            info["target_partner_name"] = ""
+            if self._marriage_partner_id:
+                mgr = get_engine(self._marriage_partner_id)
+                if mgr:
+                    info["target_partner_name"] = mgr.mgr.nickname or ""
+        return info
 
     async def _run_marriage(self):
         try:
