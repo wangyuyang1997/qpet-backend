@@ -720,11 +720,15 @@ class GameEngine:
         while self._running:
             try:
                 status = await self.marriage_status.get()
-                if not status.get("married") and self._marriage_partner_id:
+                married = status.get("married", False)
+                if not married and self._marriage_partner_id:
                     intimacy = status.get("intimacy", 0)
                     if intimacy < 100:
                         await self.supply.ensure("flowers", 0)
                         await self.marriage_flowers.run(self._marriage_partner_id, intimacy)
+                elif married and self._marriage_partner_id:
+                    warn("系统", "引擎", "已婚但_marrige_partner_id未清! 跳过好友送花", self.account_id)
+                    self._marriage_partner_id = None
             except Exception as e:
                 log_error("系统", "引擎", f"送花循环异常: {e}", self.account_id)
             await asyncio.sleep(300)
@@ -783,6 +787,8 @@ class GameEngine:
         try:
             status = await self.marriage_status.get()
             if status.get("married"):
+                # 已婚时清除追求目标，防止任何路径误调好友送花
+                self._marriage_partner_id = None
                 await self.marriage_boss.run(status)
                 await self.marriage_gift.run(status)
             elif self._marriage_partner_id:
