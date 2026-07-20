@@ -132,7 +132,7 @@ class GameEngine:
     def _init_services(self):
         """创建所有 service 实例（client 就绪后调用）"""
         c = self.client = self.mgr.client
-        c.on_rate_limited = lambda api: self._check_rate_limited({"rateLimited": True, "api": api})
+        c.on_rate_limited = lambda api, msg="": self._check_rate_limited({"rateLimited": True, "api": api, "message": msg})
         aid = self.account_id
         cfg = self.config = ConfigService(self.db)
         inv = self.inventory = Inventory(c)
@@ -666,14 +666,16 @@ class GameEngine:
     def _check_rate_limited(self, result: dict) -> bool:
         if result and result.get("rateLimited"):
             api = result.get("api", "?")
+            srv_msg = result.get("message", "")
+            detail = f" → {srv_msg}" if srv_msg else ""
             self._rate_limit_hits += 1
             if self._rate_limit_hits >= 2:
-                warn("系统", "引擎", f"连续触发风控[{api}]，自动停止挂机！", self.account_id)
+                warn("系统", "引擎", f"连续触发风控[{api}]{detail}，自动停止挂机！", self.account_id)
                 asyncio.create_task(self.stop())
                 return True
             cooldown = min(30 * (2 ** (self._rate_limit_hits - 1)), 600)
             self._rate_limit_until = time.time() + cooldown
-            warn("系统", "引擎", f"风控[{api}] 冷却 {cooldown}s (第{self._rate_limit_hits}次)", self.account_id)
+            warn("系统", "引擎", f"风控[{api}]{detail} 冷却 {cooldown}s (第{self._rate_limit_hits}次)", self.account_id)
             return True
         return False
 

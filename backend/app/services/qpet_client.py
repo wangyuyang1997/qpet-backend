@@ -144,9 +144,18 @@ class QPetClient:
                     await _async_sleep(delay)
 
                 if resp.status_code == 429:
+                    msg = "请求过于频繁"
+                    try:
+                        body_text = resp.text
+                        if body_text and body_text.startswith("{"):
+                            j = resp.json()
+                            msg = j.get("message", msg)
+                    except Exception:
+                        pass
+                    logger.warning(f"[{self.account_id}] 429风控: {self._last_api_call} → {msg}")
                     if self.on_rate_limited:
-                        self.on_rate_limited(self._last_api_call)
-                    return {"success": False, "rateLimited": True, "message": "请求过于频繁"}
+                        self.on_rate_limited(self._last_api_call, msg)
+                    return {"success": False, "rateLimited": True, "message": msg}
 
                 if resp.status_code == 401:
                     logger.warning(f"[{self.account_id}] API 401 认证失败: {self._last_api_call}")
