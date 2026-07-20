@@ -32,8 +32,10 @@ class Chest:
         if not status.get("success"):
             return False
         data = status.get("data", {})
-        if data.get("todayCount", 1) > 0 or not data.get("free", False):
-            return True  # 今天已经开过或无免费次数，视为完成
+        today_count = data.get("todayCount", 0) or 0
+        free = data.get("free", False)
+        if today_count > 0 and not free:
+            return True  # 今天已经开过，且没有免费次数了
         result = await self._client.open_chest()
         if result.get("success"):
             log_action("乐斗", "日常", "宝箱免费开启成功", self._account_id)
