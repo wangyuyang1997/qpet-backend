@@ -2,11 +2,12 @@
 支持配置项 chest_budget: free=仅免费, 100/200/300=开到对应档位
 每次开箱写入 chest_records 表"""
 import logging
+import traceback
 from datetime import datetime, timezone
 from app.services.qpet_client import QPetClient
 from app.core.logger import action as log_action, warn
 from app.core.database import AsyncSessionLocal
-from sqlalchemy import insert
+from app.models.chest_record import ChestRecord
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class Chest:
                 # 写入 chest_records
                 try:
                     async with AsyncSessionLocal() as db:
-                        await db.execute(insert('chest_records').values(
+                        db.add(ChestRecord(
                             account_id=self._account_id,
                             opened_at=datetime.now(timezone.utc),
                             cost=next_cost,
@@ -61,7 +62,7 @@ class Chest:
                         ))
                         await db.commit()
                 except Exception:
-                    pass
+                    logger.error(f"[{self._account_id}] chest_records写入失败:\n{traceback.format_exc()}")
             else:
                 msg = result.get("message", "")
                 if "经验不足" in msg:
