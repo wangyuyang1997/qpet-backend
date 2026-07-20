@@ -1,8 +1,13 @@
 """配置服务 — 开关定义查询 + 账号配置读写"""
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.config_definition import ConfigDefinition
 from app.models.account_config import AccountConfig
+from app.core.redis import cache_get, cache_set
+
+DEFS_CACHE_KEY = "qpet:config:definitions"
+DEFS_CACHE_TTL = 600
 
 
 class ConfigService:
@@ -11,9 +16,12 @@ class ConfigService:
         self.db = db
 
     async def get_definitions(self) -> list[dict]:
+        cached = await cache_get(DEFS_CACHE_KEY)
+        if cached:
+            return json.loads(cached)
         result = await self.db.execute(select(ConfigDefinition).order_by(ConfigDefinition.category, ConfigDefinition.key))
         rows = result.scalars().all()
-        return [
+        data = [
             {
                 "key": r.key,
                 "value_type": r.value_type,
@@ -23,6 +31,8 @@ class ConfigService:
             }
             for r in rows
         ]
+        await cache_set(DEFS_CACHE_KEY, json.dumps(data), DEFS_CACHE_TTL)
+        return data
 
     async def get_account_config(self, account_id: str) -> list[dict]:
         """返回该账号的有效配置 = 定义默认值 + 用户覆盖"""
