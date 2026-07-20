@@ -355,9 +355,9 @@ class GameEngine:
 
         await self.friend_sync.run()
         await self.gang.run()
-        await self.class_upgrade.run(level)
+        if await self.config.get_bool(self.account_id, "auto_class_upgrade"):
+            await self.class_upgrade.run(level)
         await self.upgrade.run(is_premium)
-        await self.equip.run()
 
         await self.tournament.run(level)
         await self._run_farm(is_premium)
