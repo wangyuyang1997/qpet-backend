@@ -123,7 +123,6 @@ class GameEngine:
         self._character_cache: dict = {}
         self._profile_cache: dict = {}
         self._marriage_partner_id: str | None = None  # 已婚=伴侣ID, 未婚=要追求的目标ID
-        self._farm_cycle_index = 0
         self._abyss_tickets = 0
         # 风控检测 对齐旧引擎 checkRateLimited / setFarmRateLimit
         self._rate_limit_hits = 0
@@ -720,15 +719,11 @@ class GameEngine:
         while self._running:
             try:
                 if not self._is_rate_limited():
-                    self._farm_cycle_index += 1
-                    if self._farm_cycle_index % 2 == 0:
-                        await self._run_farm_own()
-                    else:
-                        if random.random() < 0.8:
-                            await self._run_farm_social()
+                    await self._run_farm_own()
+                    await self._run_farm_social()
             except Exception as e:
                 log_error("系统", "引擎", f"农场循环异常: {e}", self.account_id)
-            await asyncio.sleep(120)
+            await asyncio.sleep(60)
 
     async def _flower_loop(self):
         while self._running:
