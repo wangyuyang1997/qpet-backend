@@ -45,7 +45,10 @@ class Chest:
             result = await self._client.open_chest()
             if result.get("success"):
                 opened += 1
-                log_action("乐斗", "日常", f"宝箱开启成功 ({next_cost}EXP)", self._account_id)
+                drops = result.get("data", {}).get("drops", [])
+                items = ", ".join(f"{d.get('item_name','?')}×{d.get('quantity',1)}" for d in drops)
+                cost_label = "免费" if next_cost == 0 else f"{next_cost}EXP"
+                log_action("乐斗", "日常", f"宝箱 #{opened} ({cost_label}): {items}", self._account_id)
             else:
                 msg = result.get("message", "")
                 if "经验不足" in msg:
@@ -61,6 +64,6 @@ class Chest:
             next_cost = data.get("nextCost", 0) or 0
 
         if opened:
-            log_action("乐斗", "日常", f"宝箱共开启 {opened} 次 (预算{max_cost}EXP)", self._account_id)
+            log_action("乐斗", "日常", f"宝箱共 {opened} 次 (预算{max_cost}EXP)", self._account_id)
         self._done_date = today
         return True
