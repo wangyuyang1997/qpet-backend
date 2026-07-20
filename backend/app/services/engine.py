@@ -745,13 +745,14 @@ class GameEngine:
         char = self._character_cache
         status = await self.marriage_status.get()
         partner = status.get("partner", {}) or {}
+        marriage = status.get("marriage", {}) or {}
         info: dict = {
             "married": status.get("married", False),
             "partnerName": partner.get("pet_name") or partner.get("nickname", ""),
             "partnerLevel": partner.get("level", 0),
-            "partnerUserId": status.get("partnerUserId", ""),
-            "intimacy": status.get("intimacy", 0),
-            "todayGiftSent": status.get("todayGiftSent", 0),
+            "partnerUserId": status.get("partnerUserId", "") or str(partner.get("id", "")),
+            "intimacy": marriage.get("intimacy", 0) or status.get("intimacy", 0),
+            "todayGiftSent": status.get("giftSentToday", 0) or status.get("todayGiftSent", 0),
             "todayBossDone": status.get("todayBossDone", False),
             "marriage_hp": char.get("bonus_marriage_hp", 0),
             "marriage_atk": char.get("bonus_marriage_atk", 0),
