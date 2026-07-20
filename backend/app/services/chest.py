@@ -1,13 +1,9 @@
 """宝箱自动化 — 展览厅宝箱，对齐旧引擎 autoChest()
 支持配置项 chest_budget: free=仅免费, 100/200/300=开到对应档位
-每次开箱写入 chest_records 表"""
+日志写入 category=宝箱"""
 import logging
-import traceback
-from datetime import datetime, timezone
 from app.services.qpet_client import QPetClient
 from app.core.logger import action as log_action, warn
-from app.core.database import AsyncSessionLocal
-from app.models.chest_record import ChestRecord
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +25,11 @@ class Chest:
 
         status = await self._client.get_chest_status()
         if not status.get("success"):
-            warn("乐斗", "日常", "获取宝箱状态失败", self._account_id)
+            warn("宝箱", "宝箱", "获取宝箱状态失败", self._account_id)
             return False
         data = status.get("data", {})
         next_cost = data.get("nextCost", 0) or 0
 
-        # 以服务端状态为准：nextCost > 预算上限 才跳过
         if next_cost > max_cost:
             return True
 
@@ -44,33 +39,16 @@ class Chest:
             if result.get("success"):
                 opened += 1
                 drops = result.get("data", {}).get("drops", [])
-                st = result.get("data", {}).get("status", {})
                 items = ", ".join(f"{d.get('item_name','?')}×{d.get('quantity',1)}" for d in drops)
                 cost_label = "免费" if next_cost == 0 else f"{next_cost}EXP"
-                log_action("乐斗", "日常", f"宝箱 #{opened} ({cost_label}): {items}", self._account_id)
-
-                # 写入 chest_records
-                try:
-                    async with AsyncSessionLocal() as db:
-                        db.add(ChestRecord(
-                            account_id=self._account_id,
-                            opened_at=datetime.now(timezone.utc),
-                            cost=next_cost,
-                            drops=drops,
-                            total_opens=st.get("totalOpens", 0),
-                            date_key=st.get("dateKey", ""),
-                        ))
-                        await db.commit()
-                except Exception:
-                    logger.error(f"[{self._account_id}] chest_records写入失败:\n{traceback.format_exc()}")
+                log_action("宝箱", "宝箱", f"#{opened} ({cost_label}): {items}", self._account_id)
             else:
                 msg = result.get("message", "")
                 if "经验不足" in msg:
                     break
-                warn("乐斗", "日常", f"宝箱开启失败: {msg}", self._account_id)
+                warn("宝箱", "宝箱", f"宝箱开启失败: {msg}", self._account_id)
                 break
 
-            # Refresh status for next iteration
             status = await self._client.get_chest_status()
             if not status.get("success"):
                 break
@@ -78,5 +56,5 @@ class Chest:
             next_cost = data.get("nextCost", 0) or 0
 
         if opened:
-            log_action("乐斗", "日常", f"宝箱共 {opened} 次 (预算{max_cost}EXP)", self._account_id)
+            log_action("宝箱", "宝箱", f"共 {opened} 次 (预算{max_cost}EXP)", self._account_id)
         return True
