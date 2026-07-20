@@ -247,6 +247,7 @@ class QPetClient:
         return await self.api_call("GET", "/qpet/auction/listings", params={"page": page, "pageSize": page_size, "sortBy": sort_by, "order": order})
     async def buy_auction(self, listing_id): return await self.api_call("POST", "/qpet/auction/buy", {"listingId": listing_id})
     async def get_tournament_status(self): return await self.api_call("GET", "/qpet/tournament/status")
+    async def get_loser_tournament_status(self): return await self.api_call("GET", "/qpet/loser-tournament/status")
     async def get_ranking(self): return await self.api_call("GET", "/qpet/ranking")
     async def get_gang_status(self): return await self.api_call("GET", "/qpet/social/gang/status")
     async def get_gang_list(self): return await self.api_call("GET", "/qpet/social/gang/list")
