@@ -133,6 +133,7 @@ class GameEngine:
         """创建所有 service 实例（client 就绪后调用）"""
         c = self.client = self.mgr.client
         c.on_rate_limited = lambda api, msg="": self._check_rate_limited({"rateLimited": True, "api": api, "message": msg})
+        c.on_auth_failure = lambda: self._handle_auth_failure()
         aid = self.account_id
         cfg = self.config = ConfigService(self.db)
         inv = self.inventory = Inventory(c)
@@ -657,6 +658,19 @@ class GameEngine:
             info("系统", "引擎", f"每日记录已持久化 (Lv.{level}, NPC{counters['npc_fights']}次, 塔{counters['tower_floors']}层)", self.account_id)
         except Exception as e:
             log_error("系统", "引擎", f"daily_record 写入失败: {e}", self.account_id)
+
+    async def _handle_auth_failure(self):
+        """401 认证失败时重新生成 ECDSA 密钥"""
+        warn("系统", "引擎", "API 401认证失败，尝试重新生成ECDSA密钥", self.account_id)
+        try:
+            self.client.delete_key()
+            ok = await self.client.ensure_ecdsa_ready()
+            if ok:
+                info("系统", "引擎", "ECDSA密钥已重新生成", self.account_id)
+            else:
+                warn("系统", "引擎", "ECDSA密钥重新生成失败", self.account_id)
+        except Exception as e:
+            log_error("系统", "引擎", f"密钥恢复异常: {e}", self.account_id)
 
     # ——— 风控检测 对齐旧引擎 checkRateLimited / setFarmRateLimit ———
 

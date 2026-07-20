@@ -1,4 +1,5 @@
 """QPet 游戏 API 客户端 — ECDSA 签名 + HTTP + 风控 + 静默白名单"""
+import asyncio
 import json
 import logging
 import time
@@ -164,6 +165,8 @@ class QPetClient:
 
                 if resp.status_code == 401:
                     logger.warning(f"[{self.account_id}] API 401 认证失败: {self._last_api_call}")
+                    if self.on_auth_failure:
+                        asyncio.create_task(self.on_auth_failure())
                     return {"success": False, "message": "认证失败"}
 
                 try:
