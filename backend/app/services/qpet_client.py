@@ -201,8 +201,8 @@ class QPetClient:
     async def get_level_info(self): return await self.api_call("GET", "/user/level")
     async def get_checkin_info(self): return await self.api_call("GET", "/user/checkin")
     async def checkin(self): return await self.api_call("POST", "/user/checkin")
-    async def get_chest_status(self): return await self.api_call("GET", "/qpet/collection-chest")
-    async def open_chest(self): return await self.api_call("POST", "/qpet/collection-chest/open")
+    async def get_chest_status(self): return await self.api_call("GET", "/qpet/exhibition-hall/chest-status")
+    async def open_chest(self): return await self.api_call("POST", "/qpet/exhibition-hall/chest-open", {"requestId": f"qpet-chest-{int(__import__('time').time()*1000)}"})
     async def get_inventory(self): return await self.api_call("GET", "/qpet/inventory")
     async def use_item(self, item_type: str, item_id: str, quantity: int = 1):
         return await self.api_call("POST", "/qpet/inventory/use", {"itemType": item_type, "itemId": item_id, "quantity": quantity})
