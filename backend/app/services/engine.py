@@ -140,7 +140,7 @@ class GameEngine:
 
         self.exp_boost = ExpBoost(c, inv, cfg, aid)
         self.checkin = Checkin(c, aid)
-        self.chest = Chest(c, aid)
+        self.chest = Chest(c, aid, cfg)
         self.tower = Tower(c, cfg, sup, aid)
         self.tournament = Tournament(c, aid)
         self.class_upgrade = ClassUpgrade(c, aid)
