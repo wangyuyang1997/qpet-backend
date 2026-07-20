@@ -21,3 +21,4 @@ from .gang_boss_config import GangBossConfig
 from .gang_skill import GangSkill
 from .gang_boss import GangBoss
 from .gang_member import GangMember
+from .chest_record import ChestRecord

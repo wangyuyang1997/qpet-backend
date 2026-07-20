@@ -1,8 +1,12 @@
 """宝箱自动化 — 展览厅宝箱，对齐旧引擎 autoChest()
-支持配置项 chest_budget: free=仅免费, 100/200/300=开到对应档位"""
+支持配置项 chest_budget: free=仅免费, 100/200/300=开到对应档位
+每次开箱写入 chest_records 表"""
 import logging
+from datetime import datetime, timezone
 from app.services.qpet_client import QPetClient
 from app.core.logger import action as log_action, warn
+from app.core.database import AsyncSessionLocal
+from sqlalchemy import insert
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,6 @@ class Chest:
             return False
         data = status.get("data", {})
         next_cost = data.get("nextCost", 0) or 0
-        today_count = data.get("todayCount", 0) or 0
 
         # 以服务端状态为准：nextCost > 预算上限 才跳过
         if next_cost > max_cost:
@@ -40,9 +43,25 @@ class Chest:
             if result.get("success"):
                 opened += 1
                 drops = result.get("data", {}).get("drops", [])
+                st = result.get("data", {}).get("status", {})
                 items = ", ".join(f"{d.get('item_name','?')}×{d.get('quantity',1)}" for d in drops)
                 cost_label = "免费" if next_cost == 0 else f"{next_cost}EXP"
                 log_action("乐斗", "日常", f"宝箱 #{opened} ({cost_label}): {items}", self._account_id)
+
+                # 写入 chest_records
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await db.execute(insert('chest_records').values(
+                            account_id=self._account_id,
+                            opened_at=datetime.now(timezone.utc),
+                            cost=next_cost,
+                            drops=drops,
+                            total_opens=st.get("totalOpens", 0),
+                            date_key=st.get("dateKey", ""),
+                        ))
+                        await db.commit()
+                except Exception:
+                    pass
             else:
                 msg = result.get("message", "")
                 if "经验不足" in msg:

@@ -550,6 +550,34 @@ async def get_credentials(account_id: str, _user: dict = Depends(get_current_use
         }}
 
 
+@router.get("/{account_id}/chest-records")
+async def get_chest_records(account_id: str, limit: int = 30, _user: dict = Depends(get_current_user)):
+    """查询宝箱开启记录"""
+    from sqlalchemy import select, desc
+    from app.models.chest_record import ChestRecord
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(ChestRecord)
+            .where(ChestRecord.account_id == account_id)
+            .order_by(desc(ChestRecord.opened_at))
+            .limit(min(limit, 200))
+        )
+        rows = r.scalars().all()
+        return {"success": True, "data": [
+            {
+                "id": row.id,
+                "opened_at": row.opened_at.isoformat(),
+                "cost": row.cost,
+                "drops": row.drops,
+                "total_opens": row.total_opens,
+                "date_key": row.date_key,
+            }
+            for row in rows
+        ]}
+
+
 @router.post("/{account_id}/refresh-marriage")
 async def refresh_marriage(account_id: str, _user: dict = Depends(get_current_user)):
     """触发婚姻状态刷新 + 返回完整婚姻信息"""
