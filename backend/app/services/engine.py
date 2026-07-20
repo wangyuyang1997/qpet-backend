@@ -520,8 +520,7 @@ class GameEngine:
             if row:
                 if row.checkin_done and self.checkin:
                     self.checkin._done_date = today.isoformat()
-                if row.chest_done and self.chest:
-                    self.chest._done_date = today.isoformat()
+                # chest 已改为以服务端状态为准，无需恢复
                 if row.exp_boost_checked and self.exp_boost:
                     self.exp_boost._failed_date = today.isoformat()
                 # 恢复累积计数器，防止重启丢失进度
@@ -605,7 +604,7 @@ class GameEngine:
             "exp_battle": getattr(self.npc, "today_exp", 0) if self.npc else 0,
             # 每日一次性操作完成标记
             "checkin_done": getattr(self.checkin, "_done_date", "") == today.isoformat() and 1 or 0,
-            "chest_done": getattr(self.chest, "_done_date", "") == today.isoformat() and 1 or 0,
+            "chest_done": 0,  # chest 以服务端状态为准
             "supply_checked": getattr(self.supply, "_failed", {}) and 1 or 0,
             "exp_boost_checked": getattr(self.exp_boost, "_failed_date", "") == today.isoformat() and 1 or 0,
         }

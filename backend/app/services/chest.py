@@ -1,7 +1,6 @@
 """宝箱自动化 — 展览厅宝箱，对齐旧引擎 autoChest()
 支持配置项 chest_budget: free=仅免费, 100/200/300=开到对应档位"""
 import logging
-from datetime import date
 from app.services.qpet_client import QPetClient
 from app.core.logger import action as log_action, warn
 
@@ -16,13 +15,8 @@ class Chest:
         self._client = client
         self._account_id = account_id
         self._config = config
-        self._done_date: str = ""
 
     async def run(self) -> bool:
-        today = date.today().isoformat()
-        if self._done_date == today:
-            return True
-
         budget_key = "free"
         if self._config:
             budget_key = await self._config.get_value(self._account_id, "chest_budget") or "free"
@@ -36,8 +30,8 @@ class Chest:
         next_cost = data.get("nextCost", 0) or 0
         today_count = data.get("todayCount", 0) or 0
 
-        if today_count > 0 and next_cost > max_cost:
-            self._done_date = today
+        # 以服务端状态为准：nextCost > 预算上限 才跳过
+        if next_cost > max_cost:
             return True
 
         opened = 0
@@ -65,5 +59,4 @@ class Chest:
 
         if opened:
             log_action("乐斗", "日常", f"宝箱共 {opened} 次 (预算{max_cost}EXP)", self._account_id)
-        self._done_date = today
         return True
