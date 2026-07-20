@@ -38,13 +38,13 @@ class FarmSteal:
             if ok.get("success"):
                 count += 1
                 self.today_count += 1
-                await asyncio.sleep(0.8)
             else:
                 msg = ok.get("message", "")
                 if any(kw in msg for kw in ("已偷过", "已偷完", "该作物已被偷完", "黑土地", "该地块没有作物", "仅成熟作物可偷取", "体力不足")):
                     logger.debug(f"[{self._account_id}] 偷菜跳过: {msg}")
                 else:
                     logger.warning(f"[{self._account_id}] 偷菜失败: friend={friend_id} slot={slot['slotIndex']} msg={msg}")
+            await asyncio.sleep(2.0)
 
         if count:
             from app.core.logger import action as log_action

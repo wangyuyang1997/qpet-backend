@@ -21,7 +21,7 @@ class FarmCare:
             ok = await self._client.farm_care(slot["slotIndex"])
             if ok.get("success"):
                 count += 1
-                await asyncio.sleep(0.5)
+            await asyncio.sleep(2.0)
         if count:
             log_action("农场", "照料", f"自浇水 {count}次", self._account_id)
         return count
@@ -40,7 +40,7 @@ class FarmCare:
             if ok.get("success"):
                 count += 1
                 self.helped += 1
-                await asyncio.sleep(0.6)
+            await asyncio.sleep(2.0)
         if count:
             log_action("农场", "帮浇水", f"{friend_id}: 完成 {count}次", self._account_id)
         return count

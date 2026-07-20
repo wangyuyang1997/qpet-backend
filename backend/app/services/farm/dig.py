@@ -55,5 +55,5 @@ class FarmDig:
             ok = await self._client.farm_explore_friend(friend_id, slot["slotIndex"])
             if ok.get("success"):
                 count += 1
-                await asyncio.sleep(0.8)
+            await asyncio.sleep(2.0)
         return count

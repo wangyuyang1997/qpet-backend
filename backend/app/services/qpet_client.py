@@ -25,7 +25,7 @@ SILENT_ERRORS = [
     "该地块没有作物", "仅成熟作物可偷取", "体力不足",
     "你没有加入帮派", "没有可免费挑战的BOSS",
     "一键合成为会员专属", "今日送花已达上限", "没有鲜花道具",
-    "已签到",
+    "已签到", "操作处理中",
 ]
 
 
@@ -152,6 +152,11 @@ class QPetClient:
                             msg = j.get("message", msg)
                     except Exception:
                         pass
+                    # "操作处理中"不是风控，只是服务端乐观锁，不触发冷却
+                    is_duplicate = "操作处理中" in msg or "请勿重复" in msg
+                    if is_duplicate:
+                        logger.info(f"[{self.account_id}] 重复提交: {self._last_api_call} → {msg}")
+                        return {"success": False, "message": msg}
                     logger.warning(f"[{self.account_id}] 429风控: {self._last_api_call} → {msg}")
                     if self.on_rate_limited:
                         self.on_rate_limited(self._last_api_call, msg)
