@@ -269,8 +269,11 @@ class QPetClient:
     async def get_friend_requests(self): return await self.api_call("GET", "/qpet/social/friends/requests")
     async def accept_friend(self, user_id): return await self.api_call("POST", f"/qpet/social/friends/accept/{user_id}")
     async def request_friend(self, user_id): return await self.api_call("POST", f"/qpet/social/friends/request/{user_id}")
-    async def get_auction_listings(self, page: int = 1, page_size: int = 50, sort_by: str = "created_at", order: str = "DESC"):
-        return await self.api_call("GET", "/qpet/auction/listings", params={"page": page, "pageSize": page_size, "sortBy": sort_by, "order": order})
+    async def get_auction_listings(self, page: int = 1, page_size: int = 50, sort_by: str = "created_at", order: str = "DESC", item_type: str = ""):
+        params: dict = {"page": page, "pageSize": page_size, "sortBy": sort_by, "order": order}
+        if item_type:
+            params["itemType"] = item_type
+        return await self.api_call("GET", "/qpet/auction/listings", params=params)
     async def buy_auction(self, listing_id): return await self.api_call("POST", "/qpet/auction/buy", {"listingId": listing_id})
     async def get_tournament_status(self): return await self.api_call("GET", "/qpet/tournament/status")
     async def get_loser_tournament_status(self): return await self.api_call("GET", "/qpet/loser-tournament/status")

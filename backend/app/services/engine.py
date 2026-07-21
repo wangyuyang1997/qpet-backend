@@ -454,13 +454,6 @@ class GameEngine:
             except Exception:
                 pass
 
-            # marriage → /accounts/{id}/refresh-marriage (返回结构无 success 字段，单独处理)
-            try:
-                info = await self._get_marriage_info()
-                await cache_set(f"qpet:{self.account_id}:marriage", json.dumps(info), 600)
-            except Exception:
-                pass
-
         except Exception:
             pass
 

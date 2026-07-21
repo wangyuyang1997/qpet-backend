@@ -15,23 +15,28 @@ class Auction:
         self._client = client
         self._account_id = account_id
 
-    async def snapshot(self, pages: int = 5) -> list[dict]:
-        """获取拍卖行快照，返回所有拍品"""
+    async def snapshot(self, item_type: str = "equipment", pages: int = 0) -> list[dict]:
+        """获取拍卖行快照。itemType 过滤类型，pages=0 抓全部页，>0 抓指定页数"""
         all_items = []
-        for page in range(1, pages + 1):
-            result = await self._client.get_auction_listings(page=page, page_size=50)
+        page = 1
+        while True:
+            result = await self._client.get_auction_listings(page=page, page_size=50, item_type=item_type)
             if not result.get("success"):
                 break
             items = result.get("data", {}).get("listings", [])
             if not items:
                 break
             all_items.extend(items)
+            if pages > 0 and page >= pages:
+                break
+            page += 1
+        info("拍卖", "拍卖", f"快照完成: {len(all_items)}件 (itemType={item_type}, {page}页)", self._account_id)
         return all_items
 
-    async def persist_snapshot(self, db_session) -> int:
+    async def persist_snapshot(self, db_session, item_type: str = "equipment") -> int:
         """抓取当前拍卖快照并入库，先删旧批次再全量写入。返回入库条数"""
         from app.models.auction_snapshot import AuctionSnapshot
-        listings = await self.snapshot()
+        listings = await self.snapshot(item_type=item_type)
         if not listings:
             return 0
 
@@ -72,7 +77,7 @@ class Auction:
 
     async def buy_by_name(self, name: str, max_price: int = 0) -> bool:
         """按名称匹配购买最便宜的"""
-        listings = await self.snapshot()
+        listings = await self.snapshot(item_type="")
         candidates = []
         for item in listings:
             item_name = item.get("name", "")
