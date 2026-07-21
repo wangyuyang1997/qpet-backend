@@ -87,6 +87,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    try:
+        from app.services.qpet_client import close_shared_http
+        await close_shared_http()
+    except Exception:
+        pass
+
 
 app = FastAPI(
     title="Q宠乐斗 API",

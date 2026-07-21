@@ -20,6 +20,24 @@ from app.core.crypto import (
 
 logger = logging.getLogger(__name__)
 
+# 全局共享 httpx 连接池，避免每次 API 调用新建 TCP+TLS（~200ms 开销）
+# 8 引擎并发访问同一 game API host，复用连接可减少 80%+ 的调用延迟
+_shared_http: httpx.AsyncClient | None = None
+
+
+def _get_shared_http() -> httpx.AsyncClient:
+    global _shared_http
+    if _shared_http is None:
+        _shared_http = httpx.AsyncClient(timeout=30)
+    return _shared_http
+
+
+async def close_shared_http():
+    global _shared_http
+    if _shared_http:
+        await _shared_http.aclose()
+        _shared_http = None
+
 # 已知良性失败消息，不记日志
 SILENT_ERRORS = [
     "已偷过", "已偷完", "该作物已被偷完", "黑土地作物无法偷取",
@@ -133,54 +151,54 @@ class QPetClient:
         url = settings.game_api_base_url + path
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                if method.upper() == "GET":
-                    resp = await client.get(url, headers=headers, params=params)
-                else:
-                    resp = await client.post(url, headers=headers, json=body)
+            client = _get_shared_http()
+            if method.upper() == "GET":
+                resp = await client.get(url, headers=headers, params=params)
+            else:
+                resp = await client.post(url, headers=headers, json=body)
 
-                # POST 后随机延迟
-                if method.upper() != "GET":
-                    delay = 0.6 + random.random() * 2.4
-                    await _async_sleep(delay)
+            # POST 后随机延迟
+            if method.upper() != "GET":
+                delay = 0.6 + random.random() * 2.4
+                await _async_sleep(delay)
 
-                if resp.status_code == 429:
-                    msg = "请求过于频繁"
-                    try:
-                        body_text = resp.text
-                        if body_text and body_text.startswith("{"):
-                            j = resp.json()
-                            msg = j.get("message", msg)
-                    except Exception:
-                        pass
-                    # "操作处理中"不是风控，只是服务端乐观锁，不触发冷却
-                    is_duplicate = "操作处理中" in msg or "请勿重复" in msg
-                    if is_duplicate:
-                        logger.info(f"[{self.account_id}] 重复提交: {self._last_api_call} → {msg}")
-                        return {"success": False, "message": msg}
-                    logger.warning(f"[{self.account_id}] 429风控: {self._last_api_call} → {msg}")
-                    if self.on_rate_limited:
-                        self.on_rate_limited(self._last_api_call, msg)
-                    return {"success": False, "rateLimited": True, "message": msg}
-
-                if resp.status_code == 401:
-                    logger.warning(f"[{self.account_id}] API 401 认证失败: {self._last_api_call}")
-                    if self.on_auth_failure:
-                        asyncio.create_task(self.on_auth_failure())
-                    return {"success": False, "message": "认证失败"}
-
+            if resp.status_code == 429:
+                msg = "请求过于频繁"
                 try:
-                    data = resp.json()
+                    body_text = resp.text
+                    if body_text and body_text.startswith("{"):
+                        j = resp.json()
+                        msg = j.get("message", msg)
                 except Exception:
-                    logger.error(f"[{self.account_id}] JSON解析失败: {self._last_api_call}")
-                    return {"success": False, "message": "服务器返回异常"}
+                    pass
+                # "操作处理中"不是风控，只是服务端乐观锁，不触发冷却
+                is_duplicate = "操作处理中" in msg or "请勿重复" in msg
+                if is_duplicate:
+                    logger.info(f"[{self.account_id}] 重复提交: {self._last_api_call} → {msg}")
+                    return {"success": False, "message": msg}
+                logger.warning(f"[{self.account_id}] 429风控: {self._last_api_call} → {msg}")
+                if self.on_rate_limited:
+                    self.on_rate_limited(self._last_api_call, msg)
+                return {"success": False, "rateLimited": True, "message": msg}
 
-                if not data.get("success"):
-                    msg = data.get("message", "")
-                    if not any(e in msg for e in SILENT_ERRORS):
-                        logger.warning(f"[{self.account_id}] API失败: {self._last_api_call} → {msg[:80]}")
+            if resp.status_code == 401:
+                logger.warning(f"[{self.account_id}] API 401 认证失败: {self._last_api_call}")
+                if self.on_auth_failure:
+                    asyncio.create_task(self.on_auth_failure())
+                return {"success": False, "message": "认证失败"}
 
-                return data
+            try:
+                data = resp.json()
+            except Exception:
+                logger.error(f"[{self.account_id}] JSON解析失败: {self._last_api_call}")
+                return {"success": False, "message": "服务器返回异常"}
+
+            if not data.get("success"):
+                msg = data.get("message", "")
+                if not any(e in msg for e in SILENT_ERRORS):
+                    logger.warning(f"[{self.account_id}] API失败: {self._last_api_call} → {msg[:80]}")
+
+            return data
 
         except httpx.RequestError as e:
             logger.error(f"[{self.account_id}] 网络错误: {self._last_api_call} ({e})")
@@ -190,12 +208,12 @@ class QPetClient:
         """无签名的原始请求（用于注册 ECDSA 公钥）"""
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         url = settings.game_api_base_url + path
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.request(method, url, headers=headers, json=body or {})
-            try:
-                return resp.json()
-            except Exception:
-                return {"success": False}
+        client = _get_shared_http()
+        resp = await client.request(method, url, headers=headers, json=body or {})
+        try:
+            return resp.json()
+        except Exception:
+            return {"success": False}
 
     # ——— 便捷方法：QPet 乐斗 API ———
 

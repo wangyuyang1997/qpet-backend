@@ -376,7 +376,7 @@ class GameEngine:
 
     async def _warm_api_caches(self):
         """将引擎循环中已获取的数据写入 Redis，让前端 API 永远命中缓存。
-        覆盖 character / equipment / inventory / skill-tree / gang / farm 共 6 个接口。
+        覆盖 character / profile / equipment / inventory / skill-tree / gang / gang-boss / farm / marriage 共 9 个接口。
         每 30 分钟调用一次，额外开销可忽略。
         """
         try:
@@ -432,6 +432,20 @@ class GameEngine:
 
             # farm → /accounts/{id}/farm
             await cache("farm", lambda: self._fetch_farm_data())
+
+            # marriage → /accounts/{id}/refresh-marriage（引擎每循环已调 marriage_status.get，零额外API成本）
+            try:
+                info = await self._get_marriage_info()
+                await cache_set(f"qpet:{self.account_id}:marriage", json.dumps(info), 600)
+            except Exception:
+                pass
+
+            # marriage → /accounts/{id}/refresh-marriage (返回结构无 success 字段，单独处理)
+            try:
+                info = await self._get_marriage_info()
+                await cache_set(f"qpet:{self.account_id}:marriage", json.dumps(info), 600)
+            except Exception:
+                pass
 
         except Exception:
             pass

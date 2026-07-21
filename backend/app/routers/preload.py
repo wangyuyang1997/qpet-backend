@@ -62,4 +62,15 @@ async def preload(
             except Exception:
                 pass
 
+    # 5. 婚姻/农场/帮派缓存（Redis，引擎每循环预热）
+    for aid in bound_ids:
+        if aid in accounts:
+            for key in ("marriage", "farm", "gang", "gang-boss"):
+                try:
+                    cached = await cache_get(f"qpet:{aid}:{key}")
+                    if cached:
+                        accounts[aid][key] = json.loads(cached)
+                except Exception:
+                    pass
+
     return {"success": True, "data": accounts}

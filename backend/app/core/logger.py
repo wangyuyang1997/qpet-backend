@@ -17,14 +17,19 @@ def _now() -> str:
 
 
 # 用同步 engine 避免事件循环 task 丢失
+# PG max_connections=20，日志写池必须小：pool 2 + 专用2线程执行器，与异步池(8)共存
 _sync_engine = None
+
+from concurrent.futures import ThreadPoolExecutor
+_log_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qpet-log")
 
 
 def _get_engine():
     global _sync_engine
     if _sync_engine is None:
         from sqlalchemy import create_engine
-        _sync_engine = create_engine(settings.database_url_sync)
+        _sync_engine = create_engine(settings.database_url_sync,
+                                     pool_size=2, max_overflow=0, pool_timeout=10)
     return _sync_engine
 
 
@@ -70,6 +75,16 @@ async def _broadcast(event: dict):
         pass
 
 
+def _offload(func, *args):
+    """阻塞调用丢到专用日志线程池，避免同步DB I/O冻结事件循环；无循环时内联执行"""
+    try:
+        loop = asyncio.get_running_loop()
+        return loop.run_in_executor(_log_executor, func, *args)
+    except RuntimeError:
+        func(*args)
+        return None
+
+
 def log(level: str, category: str, module: str, message: str,
         account_id: str = "", data: str | None = None):
     """写日志入库，5分钟内同账号+模块+消息自动折叠"""
@@ -82,7 +97,7 @@ def log(level: str, category: str, module: str, message: str,
     if cached and (now - cached["first_ts"]) < FOLD_WINDOW_S:
         cached["count"] += 1
         folded_msg = f"{message} (×{cached['count']})"
-        _update_log_message(cached["id"], folded_msg)
+        _offload(_update_log_message, cached["id"], folded_msg)
         # SSE broadcast async
         try:
             loop = asyncio.get_running_loop()
@@ -104,21 +119,39 @@ def log(level: str, category: str, module: str, message: str,
             if _fold_cache[k]["first_ts"] < cutoff:
                 del _fold_cache[k]
 
-    # 同步写 DB
-    log_id = _insert_log(level, category, module, message, account, data)
-    if log_id:
+    # 写 DB：有事件循环时放执行器线程，入库完成后再注册折叠缓存+广播
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        # 同步上下文（启动/关闭/迁移脚本），保持内联
+        log_id = _insert_log(level, category, module, message, account, data)
+        if log_id:
+            _fold_cache[fold_key] = {"id": log_id, "count": 1, "first_ts": now}
+        return
+
+    event = {
+        "type": "log_insert", "id": None,
+        "timestamp": _now(), "level": level,
+        "category": category or "", "module": module,
+        "message": message, "data": data, "account": account,
+    }
+    fut = loop.run_in_executor(None, _insert_log, level, category, module, message, account, data)
+
+    def _after_insert(f: asyncio.Future):
+        log_id = f.result()
+        if not log_id:
+            return
         _fold_cache[fold_key] = {"id": log_id, "count": 1, "first_ts": now}
-        # SSE broadcast async
+        event["id"] = log_id
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_broadcast({
-                "type": "log_insert", "id": log_id,
-                "timestamp": _now(), "level": level,
-                "category": category or "", "module": module,
-                "message": message, "data": data, "account": account,
-            }))
+            loop.create_task(_broadcast(event))
         except RuntimeError:
             pass
+
+    fut.add_done_callback(_after_insert)
 
 
 def _event_loop():

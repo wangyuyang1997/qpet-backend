@@ -589,12 +589,24 @@ async def get_chest_records(account_id: str, limit: int = 30, _user: dict = Depe
 
 @router.post("/{account_id}/refresh-marriage")
 async def refresh_marriage(account_id: str, _user: dict = Depends(get_current_user)):
-    """触发婚姻状态刷新 + 返回完整婚姻信息"""
+    """返回婚姻信息：优先读引擎预热的 Redis 缓存，miss 才现场调游戏 API"""
+    cache_key = f"qpet:{account_id}:marriage"
+    cached = await cache_get(cache_key)
+    if cached:
+        try:
+            return {"success": True, "data": json.loads(cached)}
+        except Exception:
+            pass
+
     engine = get_engine(account_id)
     if not engine or not engine._running:
         return {"success": False, "message": "引擎未运行"}
 
     info = await engine._get_marriage_info()
+    try:
+        await cache_set(cache_key, json.dumps(info), 600)
+    except Exception:
+        pass
     return {"success": True, "data": info}
 
 
