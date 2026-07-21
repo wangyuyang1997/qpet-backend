@@ -132,6 +132,8 @@ RECS_PER_SLOT = 5
 
 # 进程级内存缓存：单 worker 模式，避免每次请求重复拉 DB 或远程 Redis
 _mem_cache: dict = {"ts": None, "items": [], "equip_count": 0}
+# 装备评分缓存：key = account_id，每次引擎 cycle 清空
+_equip_score_cache: dict[str, tuple[str, dict[str, int]]] = {}  # accountId → (equipment_cache_key, scores)
 
 
 async def _load_and_process_snapshot(db: AsyncSession) -> dict:
@@ -146,22 +148,50 @@ async def _load_and_process_snapshot(db: AsyncSession) -> dict:
     if _mem_cache["ts"] == latest_ts:
         return {"snapshot_at": latest_ts, "items": _mem_cache["items"], "equipment_count": _mem_cache["equip_count"]}
 
-    # 缓存未命中 → DB 全量加载
+    # 缓存未命中 → DB 加载（只 SELECT 轻量列，跳过 raw_data 大字段）
+    cols = [AuctionSnapshot.id, AuctionSnapshot.item_id, AuctionSnapshot.name,
+            AuctionSnapshot.slot, AuctionSnapshot.quality, AuctionSnapshot.item_level,
+            AuctionSnapshot.price, AuctionSnapshot.seller_name,
+            AuctionSnapshot.enhance_level, AuctionSnapshot.growth_level,
+            AuctionSnapshot.class_required, AuctionSnapshot.armor_type,
+            AuctionSnapshot.set_info, AuctionSnapshot.base_stats, AuctionSnapshot.affixes]
     result = await db.execute(
-        select(AuctionSnapshot).where(AuctionSnapshot.snapshot_at == latest_ts)
+        select(*cols).where(AuctionSnapshot.snapshot_at == latest_ts)
     )
-    rows = result.scalars().all()
+    rows = result.all()
 
     items = []
     for row in rows:
-        item = _parse_item(row.raw_data, {
-            "id": row.id, "item_id": row.item_id, "name": row.name,
-            "slot": row.slot, "quality": row.quality, "item_level": row.item_level,
-            "price": row.price, "seller_name": row.seller_name,
-            "enhance_level": row.enhance_level, "growth_level": row.growth_level,
-            "class_required": row.class_required, "armor_type": row.armor_type,
-            "set_info": row.set_info,
+        item = _parse_item(None, {  # raw_data=None，直接用 DB 列（persist 时已提取）
+            "id": row[0], "item_id": row[1], "name": row[2],
+            "slot": row[3], "quality": row[4], "item_level": row[5],
+            "price": row[6], "seller_name": row[7],
+            "enhance_level": row[8], "growth_level": row[9],
+            "class_required": row[10], "armor_type": row[11],
+            "set_info": row[12],
         })
+        # base_stats/affixes 已存 DB（persist 时 json.dumps），翻译 stat key
+        item["base_stats"] = {}
+        bs = row[13]
+        if isinstance(bs, str):
+            try:
+                raw_stats = json.loads(bs)
+                for k, v in (raw_stats or {}).items():
+                    item["base_stats"][STAT_LABELS.get(k, k)] = v
+            except Exception: pass
+        elif isinstance(bs, dict):
+            for k, v in bs.items():
+                item["base_stats"][STAT_LABELS.get(k, k)] = v
+        item["affixes"] = []
+        af = row[14]
+        if isinstance(af, str):
+            try: item["affixes"] = json.loads(af)
+            except Exception: pass
+        elif isinstance(af, list):
+            item["affixes"] = af
+        # 品质中文 label：DB quality 列已有中文名，补 equip_slot 和 item_type
+        item["equip_slot"] = item.get("slot") or ""
+        item["item_type"] = "equipment" if item.get("slot") else ""
         item["score"] = _calc_item_score(item)
         items.append(item)
 
@@ -224,23 +254,30 @@ async def get_snapshots(
     equipped: dict[str, dict] = {}
     char_class = ""
     if char_data:
-        eq_cached = await cache_get(f"qpet:{accountId}:equipment")
-        if eq_cached:
-            try:
-                eq = json.loads(eq_cached)
-                for slot, item in (eq.get("equipped", {}) or {}).items():
-                    il = item.get("item_level") or item.get("itemLevel") or item.get("level", 0) or 0
-                    equipped[slot] = {
-                        "name": item.get("name", ""),
-                        "item_level": il,
-                        "score": item.get("score", item.get("combatPower", 0)) or _calc_item_score(item),
-                        "enhance_level": item.get("enhanceLevel", item.get("enhance_level", 0)) or 0,
-                        "quality": item.get("quality", ""),
-                        "set_name": item.get("setName", item.get("set_name", "")),
-                    }
-            except Exception:
-                pass
         char_class = char_data.get("className", char_data.get("class_name", "")) or ""
+
+        # 装备评分优先拿内存缓存（30min 内不变），miss 才调 Redis
+        cache_entry = _equip_score_cache.get(accountId)
+        if cache_entry and cache_entry[0] == char_class:
+            equipped = cache_entry[1]
+        else:
+            eq_json_str = await cache_get(f"qpet:{accountId}:equipment")
+            if eq_json_str:
+                try:
+                    eq = json.loads(eq_json_str)
+                    for slot, item in (eq.get("equipped", {}) or {}).items():
+                        il = item.get("item_level") or item.get("itemLevel") or item.get("level", 0) or 0
+                        equipped[slot] = {
+                            "name": item.get("name", ""),
+                            "item_level": il,
+                            "score": item.get("score", item.get("combatPower", 0)) or _calc_item_score(item),
+                            "enhance_level": item.get("enhanceLevel", item.get("enhance_level", 0)) or 0,
+                            "quality": item.get("quality", ""),
+                            "set_name": item.get("setName", item.get("set_name", "")),
+                        }
+                    _equip_score_cache[accountId] = (char_class, equipped)
+                except Exception:
+                    pass
 
     preferred_armor = ARMOR_TYPE_ALIAS.get(char_class, [])
 
