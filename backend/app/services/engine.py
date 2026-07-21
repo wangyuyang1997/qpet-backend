@@ -440,6 +440,20 @@ class GameEngine:
             except Exception:
                 pass
 
+            # auction → 拍卖快照持久化（每30min仅一次，任意引擎首次命中即执行）
+            try:
+                from datetime import datetime, timezone, timedelta
+                from sqlalchemy import select, func
+                from app.models.auction_snapshot import AuctionSnapshot
+                latest = await self.db.execute(select(func.max(AuctionSnapshot.snapshot_at)))
+                latest_ts = latest.scalar()
+                if latest_ts is None or (datetime.now(timezone.utc) - latest_ts.replace(tzinfo=timezone.utc)) > timedelta(minutes=25):
+                    from app.services.auction import Auction
+                    auc = Auction(self.client, self.account_id)
+                    await auc.persist_snapshot(self.db)
+            except Exception:
+                pass
+
             # marriage → /accounts/{id}/refresh-marriage (返回结构无 success 字段，单独处理)
             try:
                 info = await self._get_marriage_info()

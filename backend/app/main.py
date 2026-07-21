@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, config, accounts, logs, preload
+from app.routers import auth, config, accounts, logs, preload, auction
 
 logger = logging.getLogger("qpet.main")
 
@@ -115,6 +115,7 @@ app.include_router(config.router)
 app.include_router(accounts.router)
 app.include_router(logs.router)
 app.include_router(preload.router)
+app.include_router(auction.router)
 
 
 @app.get("/api/version", response_model=dict)

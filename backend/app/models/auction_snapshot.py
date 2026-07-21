@@ -8,7 +8,6 @@ class AuctionSnapshot(Base):
     __tablename__ = "auction_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    batch_id: Mapped[str | None] = mapped_column(String(32))
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     item_id: Mapped[str] = mapped_column(Text, default="")
     name: Mapped[str] = mapped_column(String(128), default="")
