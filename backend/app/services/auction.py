@@ -48,22 +48,25 @@ class Auction:
 
         rows = []
         for item in listings:
+            meta = item.get("metadata", {}) or {}
+            qi = meta.get("qualityInfo", {}) or {}
+            si = meta.get("setInfo", {}) or {}
             rows.append({
                 "snapshot_at": now,
                 "item_id": str(item.get("item_id", "")),
                 "name": item.get("item_name", item.get("name", "")),
                 "slot": item.get("equip_slot") or "",
-                "quality": item.get("equip_quality") or "",
-                "item_level": item.get("equip_item_level", 0) or 0,
+                "quality": qi.get("label", item.get("equip_quality", "")) or "",
+                "item_level": meta.get("item_level", item.get("equip_item_level", 0)) or 0,
                 "price": item.get("price", 0),
                 "seller_name": item.get("seller_nickname", item.get("seller_name", "")),
-                "enhance_level": item.get("enhance_level", 0) or 0,
+                "enhance_level": meta.get("enhance", item.get("enhance_level", 0)) or 0,
                 "growth_level": item.get("growth_level", 0) or 0,
-                "class_required": "",
-                "armor_type": "",
-                "set_info": "",
-                "base_stats": "",
-                "affixes": "",
+                "class_required": meta.get("classReqName") or "",
+                "armor_type": meta.get("armorTypeName") or "",
+                "set_info": si.get("name") or "",
+                "base_stats": json.dumps(meta.get("base_stats") or {}, ensure_ascii=False),
+                "affixes": json.dumps(meta.get("affixes") or [], ensure_ascii=False),
                 "raw_data": json.dumps(item, ensure_ascii=False),
             })
 

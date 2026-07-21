@@ -10,7 +10,9 @@ import json
 
 router = APIRouter(prefix="/api/auction", tags=["auction"])
 
-RARITY_BASE: dict[str, int] = {"fabled": 60, "epic": 48, "rare": 36, "fine": 24, "normal": 12}
+RARITY_BASE: dict[str, int] = {"fabled": 60, "epic": 48, "rare": 36, "fine": 24, "normal": 12,
+                              "传说": 60, "稀有": 36, "良品": 24, "普通": 12, "神器": 72}
+QUALITY_COLOR: dict[str, str] = {"传说": "#fa8c16", "稀有": "#722ed1", "良品": "#1677ff", "普通": "#999", "神器": "#f5222d"}
 ARMOR_TYPE_ALIAS: dict[str, list[str]] = {"狂战士": ["重"], "圣骑士": ["重"], "剑客": ["轻"], "法师": ["布"], "暗杀者": ["轻"]}
 
 
@@ -30,11 +32,31 @@ def _parse_item(raw_data_str: str | None, mapped: dict) -> dict:
     except Exception:
         return mapped
     mapped = dict(mapped)
+    # 顶层 equip_* 字段
     for key in ("equip_slot", "equip_quality", "equip_item_level", "equip_no_level_req"):
         val = raw.get(key)
         if val is not None:
             mapped[key] = val
     mapped["item_type"] = raw.get("item_type", "")
+    # metadata 嵌套字段（品质名/属性/词缀/套装/护甲）
+    meta = raw.get("metadata", {}) or {}
+    if meta:
+        qi = meta.get("qualityInfo", {}) or {}
+        si = meta.get("setInfo", {}) or {}
+        if qi:
+            mapped["quality"] = qi.get("label", qi.get("qualityName", mapped.get("quality", ""))) or mapped.get("quality", "")
+        if meta.get("item_level"):
+            mapped["item_level"] = meta["item_level"]
+        if meta.get("armorTypeName"):
+            mapped["armor_type"] = meta["armorTypeName"]
+        if meta.get("classReqName"):
+            mapped["class_required"] = meta["classReqName"]
+        if si and si.get("name"):
+            mapped["set_info"] = si["name"]
+        if meta.get("base_stats"):
+            mapped["base_stats"] = meta["base_stats"]
+        if meta.get("affixes"):
+            mapped["affixes"] = meta["affixes"]
     return mapped
 
 

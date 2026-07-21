@@ -31,7 +31,7 @@ class Chest:
         next_cost = data.get("nextCost", 0) or 0
 
         if next_cost > max_cost:
-            return True
+            return True  # 预算已用完，跳过（不记日志避免刷屏）
 
         opened = 0
         while next_cost <= max_cost:
