@@ -127,20 +127,27 @@ async def refresh_snapshot(
     return {"success": True, "message": f"快照已刷新: {count} 件装备"}
 
 
+SLOT_ORDER = ["head", "armor", "bracer", "belt", "boots", "necklace"]
+RECS_PER_SLOT = 5
+
 @router.get("/snapshots")
 async def get_snapshots(
     accountId: str = Query(""),
     type: str = Query("all"),
+    minLevel: int = Query(0),
+    maxLevel: int = Query(0),
+    armorType: str = Query(""),
+    classRequired: str = Query(""),
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    """返回最新一批拍卖快照 + 当前角色装备 + 推荐列表。
-    type=equipment 仅返回可装备拍品，推荐也基于装备筛选。
+    """返回最新拍卖快照 + 当前角色装备 + 按槽位分组的推荐列表。
+    筛选参数：type=equipment, minLevel, maxLevel, armorType, classRequired
     """
     latest_row = await db.execute(select(func.max(AuctionSnapshot.snapshot_at)))
     latest_ts = latest_row.scalar()
     if not latest_ts:
-        return {"success": True, "data": {"items": [], "recommended": [], "metadata": {"total": 0}}}
+        return {"success": True, "data": {"items": [], "recommended": {}, "metadata": {"total": 0}}}
 
     result = await db.execute(
         select(AuctionSnapshot).where(AuctionSnapshot.snapshot_at == latest_ts)
@@ -162,6 +169,16 @@ async def get_snapshots(
 
     only_equipment = type == "equipment"
     items = [i for i in raw_items if not only_equipment or (i.get("equip_slot") or i.get("slot"))]
+
+    # 额外筛选
+    if minLevel > 0:
+        items = [i for i in items if (i.get("item_level") or 0) >= minLevel]
+    if maxLevel > 0:
+        items = [i for i in items if (i.get("item_level") or 0) <= maxLevel]
+    if armorType:
+        items = [i for i in items if armorType in (i.get("armor_type") or "")]
+    if classRequired:
+        items = [i for i in items if classRequired in (i.get("class_required") or "")]
 
     # 当前角色装备
     char_data = None
@@ -196,12 +213,12 @@ async def get_snapshots(
 
     preferred_armor = ARMOR_TYPE_ALIAS.get(char_class, [])
 
-    # 推荐：纯净对比（基础分=等级×品质基数），stats/词缀作为展示分
+    # 推荐：按槽位分组，每槽位 top N
     equip_scores = {}
     for slot, cur in equipped.items():
         equip_scores[slot] = _calc_base_score(cur)
 
-    recommended = []
+    by_slot: dict[str, list] = {s: [] for s in SLOT_ORDER}
     for item in items:
         slot = item.get("equip_slot") or item.get("slot") or ""
         if not slot or slot not in equip_scores:
@@ -211,37 +228,50 @@ async def get_snapshots(
         if current_score <= 0 or item_base <= 0:
             continue
         improvement = (item_base - current_score) / current_score
-        if improvement < 0.05:
-            continue
         armor_match = 1 if preferred_armor and any(
             a in (item.get("armor_type") or "") for a in preferred_armor
         ) else 0
         set_match = 1 if item.get("set_info") and item.get("set_info") == equipped[slot].get("set_name") else 0
-        recommended.append({
+        class_match = 1 if char_class and item.get("class_required") == char_class else 0
+        by_slot[slot].append({
             **item,
-            "improvement": round(improvement * 100, 1),
+            "improvement": round(improvement * 100, 1) if improvement > 0 else 0,
             "current_score": current_score,
             "current_name": equipped[slot].get("name", ""),
             "armor_match": bool(armor_match),
             "set_match": bool(set_match),
-            "_rank": improvement * 100 + armor_match * 10 + set_match * 20,
+            "class_match": bool(class_match),
+            "_rank": improvement * 100 + armor_match * 10 + set_match * 20 + class_match * 30,
         })
 
-    recommended.sort(key=lambda x: -x["_rank"])
-    for r in recommended:
-        r.pop("_rank", None)
+    recommended: dict[str, list] = {}
+    total_improved = 0
+    for s in SLOT_ORDER:
+        items_in_slot = by_slot.get(s, [])
+        items_in_slot.sort(key=lambda x: -x["_rank"])
+        improved = [i for i in items_in_slot if i["improvement"] > 0]
+        total_improved += len(improved)
+        for i in items_in_slot:
+            i.pop("_rank", None)
+        recommended[s] = items_in_slot[:RECS_PER_SLOT]
+
+    # 可用筛选值
+    armor_types = sorted(set(i.get("armor_type", "") for i in items if i.get("armor_type")))
+    class_names = sorted(set(i.get("class_required", "") for i in items if i.get("class_required")))
 
     return {
         "success": True,
         "data": {
             "items": items,
-            "recommended": recommended[:3],
+            "recommended": recommended,
             "current_equipment": equipped,
             "char_class": char_class,
+            "filters": {"armor_types": armor_types, "class_names": class_names},
             "metadata": {
                 "total": len(raw_items),
                 "filtered": len(items),
                 "equipment_count": sum(1 for i in raw_items if i.get("equip_slot") or i.get("slot")),
+                "improved_count": total_improved,
                 "snapshot_at": latest_ts.isoformat() if latest_ts else None,
             },
         },
