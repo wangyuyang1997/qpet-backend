@@ -31,13 +31,26 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import select
         from app.models.account import Account
         from app.services.engine import get_or_create_engine
+        import random
         async with AsyncSessionLocal() as db:
             r = await db.execute(select(Account.id).where(Account.running == 1))
             running_ids = [row[0] for row in r.fetchall()]
+
+        async def delayed_start(aid: str, delay: float):
+            # 随机错峰，避免多账号同时 relogin 触发游戏端登录风控
+            await asyncio.sleep(delay)
+            for attempt in range(3):
+                engine = await get_or_create_engine(aid)
+                if not engine:
+                    return
+                if await engine.start():
+                    return
+                logger.warning(f"[{aid}] 引擎恢复失败(第{attempt + 1}次)，60s后重试")
+                await asyncio.sleep(60)
+            logger.error(f"[{aid}] 引擎恢复最终失败")
+
         for aid in running_ids:
-            engine = await get_or_create_engine(aid)
-            if engine:
-                asyncio.create_task(engine.start())
+            asyncio.create_task(delayed_start(aid, random.uniform(0, 45)))
     except Exception as e:
         logger.warning(f"恢复引擎失败: {e}")
 

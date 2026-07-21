@@ -10,6 +10,7 @@ from app.services.account_manager import list_accounts as get_all_accounts
 from app.services.engine import get_engine, get_or_create_engine
 from app.services.farm.query import FarmQuery
 from app.core.database import AsyncSessionLocal
+from app.models.account import Account
 from app.models.user import User, UserAccount
 import json
 
@@ -295,6 +296,14 @@ async def start_account(account_id: str, _user: dict = Depends(get_current_user)
 async def stop_account(account_id: str, _user: dict = Depends(get_current_user)):
     engine = get_engine(account_id)
     if not engine or not engine._running:
+        # 内存无引擎（启动失败/进程重启后状态丢失），兜底复位 DB 标志，保证能重新启动
+        async with AsyncSessionLocal() as db:
+            acc = await db.get(Account, account_id)
+            if acc and acc.running:
+                acc.running = 0
+                await db.commit()
+                action("系统", "管理", f"引擎状态复位(内存缺失): {account_id}", account_id)
+                return {"success": True, "message": "引擎已停止(状态已复位)"}
         return {"success": False, "message": "引擎未运行"}
     await engine.stop()
     action("系统", "管理", f"用户手动停止引擎: {account_id}", account_id)

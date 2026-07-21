@@ -193,6 +193,13 @@ class GameEngine:
 
         ok = await self.mgr.start()
         if not ok:
+            # 启动失败必须复位 DB running 标志，否则前端显示"启动中"但内存无引擎，无法停止/重启
+            await self.mgr._save_running(0)
+            log_error("系统", "引擎", "启动失败(登录/连接异常)，运行标志已复位", self.account_id)
+            try:
+                await self.db.close()
+            except Exception:
+                pass
             return False
 
         self.peers = await self.mgr.get_peers()
