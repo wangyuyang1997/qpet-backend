@@ -138,11 +138,15 @@ async def get_snapshots(
     maxLevel: int = Query(0),
     armorType: str = Query(""),
     classRequired: str = Query(""),
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=10, le=200),
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
     """返回最新拍卖快照 + 当前角色装备 + 按槽位分组的推荐列表。
     筛选参数：type=equipment, minLevel, maxLevel, armorType, classRequired
+    分页参数：page, pageSize
+    推荐不受分页影响，始终基于全量数据。
     """
     latest_row = await db.execute(select(func.max(AuctionSnapshot.snapshot_at)))
     latest_ts = latest_row.scalar()
@@ -259,17 +263,28 @@ async def get_snapshots(
     armor_types = sorted(set(i.get("armor_type", "") for i in items if i.get("armor_type")))
     class_names = sorted(set(i.get("class_required", "") for i in items if i.get("class_required")))
 
+    # 分页切片（推荐用全量数据计算，items 按分页返回）
+    total_filtered = len(items)
+    start = (page - 1) * pageSize
+    paged_items = items[start:start + pageSize]
+
     return {
         "success": True,
         "data": {
-            "items": items,
+            "items": paged_items,
             "recommended": recommended,
             "current_equipment": equipped,
             "char_class": char_class,
             "filters": {"armor_types": armor_types, "class_names": class_names},
+            "pagination": {
+                "page": page,
+                "pageSize": pageSize,
+                "total": total_filtered,
+                "totalPages": max(1, (total_filtered + pageSize - 1) // pageSize),
+            },
             "metadata": {
                 "total": len(raw_items),
-                "filtered": len(items),
+                "filtered": total_filtered,
                 "equipment_count": sum(1 for i in raw_items if i.get("equip_slot") or i.get("slot")),
                 "improved_count": total_improved,
                 "snapshot_at": latest_ts.isoformat() if latest_ts else None,
