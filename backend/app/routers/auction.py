@@ -130,6 +130,49 @@ async def refresh_snapshot(
 SLOT_ORDER = ["head", "armor", "bracer", "belt", "boots", "necklace"]
 RECS_PER_SLOT = 5
 
+# 进程级内存缓存：单 worker 模式，避免每次请求重复拉 DB 或远程 Redis
+_mem_cache: dict = {"ts": None, "items": [], "equip_count": 0}
+
+
+async def _load_and_process_snapshot(db: AsyncSession) -> dict:
+    """加载最新快照 + 解析评分，结果缓存在进程内存（单 worker 零开销）。"""
+    # 先查最新快照时间（轻量查询）
+    latest_row = await db.execute(select(func.max(AuctionSnapshot.snapshot_at)))
+    latest_ts = latest_row.scalar()
+    if not latest_ts:
+        return {"snapshot_at": None, "items": [], "equipment_count": 0}
+
+    # 时间戳未变 → 命中内存缓存
+    if _mem_cache["ts"] == latest_ts:
+        return {"snapshot_at": latest_ts, "items": _mem_cache["items"], "equipment_count": _mem_cache["equip_count"]}
+
+    # 缓存未命中 → DB 全量加载
+    result = await db.execute(
+        select(AuctionSnapshot).where(AuctionSnapshot.snapshot_at == latest_ts)
+    )
+    rows = result.scalars().all()
+
+    items = []
+    for row in rows:
+        item = _parse_item(row.raw_data, {
+            "id": row.id, "item_id": row.item_id, "name": row.name,
+            "slot": row.slot, "quality": row.quality, "item_level": row.item_level,
+            "price": row.price, "seller_name": row.seller_name,
+            "enhance_level": row.enhance_level, "growth_level": row.growth_level,
+            "class_required": row.class_required, "armor_type": row.armor_type,
+            "set_info": row.set_info,
+        })
+        item["score"] = _calc_item_score(item)
+        items.append(item)
+
+    equip_count = sum(1 for i in items if i.get("equip_slot") or i.get("slot"))
+    _mem_cache["ts"] = latest_ts
+    _mem_cache["items"] = items
+    _mem_cache["equip_count"] = equip_count
+
+    return {"snapshot_at": latest_ts, "items": items, "equipment_count": equip_count}
+
+
 @router.get("/snapshots")
 async def get_snapshots(
     accountId: str = Query(""),
@@ -148,28 +191,12 @@ async def get_snapshots(
     分页参数：page, pageSize
     推荐不受分页影响，始终基于全量数据。
     """
-    latest_row = await db.execute(select(func.max(AuctionSnapshot.snapshot_at)))
-    latest_ts = latest_row.scalar()
-    if not latest_ts:
+    snapshot = await _load_and_process_snapshot(db)
+    if not snapshot["snapshot_at"]:
         return {"success": True, "data": {"items": [], "recommended": {}, "metadata": {"total": 0}}}
 
-    result = await db.execute(
-        select(AuctionSnapshot).where(AuctionSnapshot.snapshot_at == latest_ts)
-    )
-    rows = result.scalars().all()
-
-    raw_items = []
-    for row in rows:
-        item = _parse_item(row.raw_data, {
-            "id": row.id, "item_id": row.item_id, "name": row.name,
-            "slot": row.slot, "quality": row.quality, "item_level": row.item_level,
-            "price": row.price, "seller_name": row.seller_name,
-            "enhance_level": row.enhance_level, "growth_level": row.growth_level,
-            "class_required": row.class_required, "armor_type": row.armor_type,
-            "set_info": row.set_info,
-        })
-        item["score"] = _calc_item_score(item)
-        raw_items.append(item)
+    raw_items = snapshot["items"]
+    latest_ts = snapshot["snapshot_at"]
 
     only_equipment = type == "equipment"
     items = [i for i in raw_items if not only_equipment or (i.get("equip_slot") or i.get("slot"))]
