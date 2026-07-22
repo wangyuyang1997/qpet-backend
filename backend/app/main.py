@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.auth_middleware import get_current_user
-from app.routers import auth, config, accounts, logs, preload, auction, tampermonkey
+from app.routers import auth, config, accounts, logs, preload, auction, ai, tampermonkey
 
 logger = logging.getLogger("qpet.main")
 
@@ -27,6 +27,14 @@ async def lifespan(app: FastAPI):
         await init_rabbitmq()
     except Exception:
         pass
+
+    # 初始化 AI 服务（加载知识库）
+    try:
+        from app.services.ai import service as ai_service
+        ai_service.init()
+        logger.info("[ai] AI服务初始化完成")
+    except Exception as e:
+        logger.warning(f"[ai] AI服务初始化失败: {e}")
 
     # 恢复 running=1 的引擎
     try:
@@ -119,6 +127,7 @@ app.include_router(accounts.router)
 app.include_router(logs.router)
 app.include_router(preload.router)
 app.include_router(auction.router)
+app.include_router(ai.router)
 app.include_router(tampermonkey.router)
 
 
