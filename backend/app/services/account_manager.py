@@ -172,6 +172,8 @@ class AccountManager:
                 await self.db.commit()
         except Exception as e:
             logger.error(f"[{self.id}] _save_running 失败: {e}")
+            try: await self.db.rollback()
+            except Exception: pass
 
     async def _save_info(self):
         try:
@@ -183,6 +185,8 @@ class AccountManager:
                 await self.db.commit()
         except Exception as e:
             logger.error(f"[{self.id}] _save_info 失败: {e}")
+            try: await self.db.rollback()
+            except Exception: pass
 
     # ——— 获取同行账号（同用户的托管账号） ———
 

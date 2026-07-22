@@ -324,6 +324,8 @@ class GameEngine:
                 await self.full_auto_cycle()
             except Exception as e:
                 log_error("系统", "引擎", f"主循环异常: {e}", self.account_id)
+                try: await self.db.rollback()
+                except Exception: pass
             await asyncio.sleep(1800 + random.randint(0, 60))
 
     async def full_auto_cycle(self):
@@ -455,7 +457,8 @@ class GameEngine:
                 pass
 
         except Exception:
-            pass
+            try: await self.db.rollback()
+            except Exception: pass
 
     async def _fetch_farm_data(self):
         """获取农场数据并合并 DB 计数"""
@@ -502,6 +505,8 @@ class GameEngine:
             await self.db.commit()
         except Exception as e:
             log_error("系统", "引擎", f"偷菜计数入库失败: {e}", self.account_id)
+            try: await self.db.rollback()
+            except Exception: pass
 
     async def _get_gang_contrib(self) -> int:
         """从帮派BOSS API取今日贡献，对齐旧引擎"""
@@ -686,6 +691,8 @@ class GameEngine:
             info("系统", "引擎", f"每日记录已持久化 (Lv.{level}, NPC{counters['npc_fights']}次, 塔{counters['tower_floors']}层)", self.account_id)
         except Exception as e:
             log_error("系统", "引擎", f"daily_record 写入失败: {e}", self.account_id)
+            try: await self.db.rollback()
+            except Exception: pass
 
     async def _handle_auth_failure(self):
         """401 认证失败时重新生成 ECDSA 密钥"""
@@ -755,6 +762,8 @@ class GameEngine:
                             await self._run_farm_social()
             except Exception as e:
                 log_error("系统", "引擎", f"农场循环异常: {e}", self.account_id)
+                try: await self.db.rollback()
+                except Exception: pass
             await asyncio.sleep(60)
 
     async def _flower_loop(self):

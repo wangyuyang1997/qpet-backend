@@ -41,11 +41,6 @@ class Auction:
             return 0
 
         now = datetime.now(timezone.utc)
-        # 删除旧快照
-        from sqlalchemy import delete
-        await db_session.execute(delete(AuctionSnapshot))
-        await db_session.flush()
-
         rows = []
         for item in listings:
             meta = item.get("metadata", {}) or {}
@@ -70,11 +65,20 @@ class Auction:
                 "raw_data": json.dumps(item, ensure_ascii=False),
             })
 
-        if rows:
+        if not rows:
+            return 0
+
+        try:
+            from sqlalchemy import delete
+            await db_session.execute(delete(AuctionSnapshot))
             stmt = insert(AuctionSnapshot).values(rows)
             await db_session.execute(stmt)
             await db_session.commit()
             info("拍卖", "拍卖", f"快照已更新: {len(rows)} 件", self._account_id)
+        except Exception:
+            try: await db_session.rollback()
+            except Exception: pass
+            raise
 
         return len(rows)
 
