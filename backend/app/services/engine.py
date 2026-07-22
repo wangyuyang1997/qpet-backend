@@ -284,6 +284,10 @@ class GameEngine:
             self.mgr.nickname = self._character_cache.get("nickname", self.mgr.nickname)
             self.mgr.level = self._character_cache.get("level", self.mgr.level)
             self.mgr.class_name = self._character_cache.get("className", self.mgr.class_name)
+            # 同步婚姻伴侣ID：游戏API已婚则自动更新，否则保持 config 中的追求目标
+            mp = self._character_cache.get("marriagePartnerId")
+            if mp:
+                self._marriage_partner_id = mp
             await self.mgr._save_info()
         else:
             warn("系统", "引擎", "角色刷新API返回失败", self.account_id)
@@ -824,13 +828,50 @@ class GameEngine:
                 for s in skills_raw if s.get("name") in marriage_skill_names
             ]
         else:
-            # 未婚：返回伴侣绑定状态
-            info["target_partner_id"] = self._marriage_partner_id or ""
+            # 未婚：L1 引擎内存 → L2 配置表 → L3 DB直查降级
+            target_id = self._marriage_partner_id
+            if not target_id:
+                try:
+                    from sqlalchemy import select as _sel
+                    from app.models.account_config import AccountConfig as _AC
+                    from app.core.database import AsyncSessionLocal as _ASL
+                    async with _ASL() as _db:
+                        r = await _db.execute(_sel(_AC.value).where(_AC.account_id == self.account_id, _AC.config_key == "marriage_partner"))
+                        val = r.scalar()
+                        if val:
+                            target_id = val
+                            self._marriage_partner_id = val
+                except Exception:
+                    pass
+                if target_id:
+                    self._marriage_partner_id = target_id
+            if not target_id:
+                try:
+                    from app.core.redis import cache_get
+                    cached = await cache_get(f"qpet:{self.account_id}:marriage")
+                    if cached:
+                        import json
+                        m = json.loads(cached)
+                        target_id = m.get("target_partner_id") or ""
+                except Exception:
+                    pass
+            info["target_partner_id"] = target_id or ""
             info["target_partner_name"] = ""
-            if self._marriage_partner_id:
-                mgr = get_engine(self._marriage_partner_id)
+            if target_id:
+                mgr = get_engine(target_id)
                 if mgr:
                     info["target_partner_name"] = mgr.mgr.nickname or ""
+                else:
+                    # 目标引擎未运行，从 DB 查昵称
+                    try:
+                        from sqlalchemy import select
+                        from app.models.account import Account
+                        r = await self.db.execute(select(Account.nickname).where(Account.id == target_id))
+                        name = r.scalar()
+                        if name:
+                            info["target_partner_name"] = name
+                    except Exception:
+                        pass
         return info
 
     async def _run_marriage(self):

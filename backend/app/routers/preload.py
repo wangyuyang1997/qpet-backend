@@ -62,15 +62,21 @@ async def preload(
             except Exception:
                 pass
 
-    # 5. 婚姻/农场/帮派缓存（Redis，引擎每循环预热）
+    # 5. 婚姻/农场/帮派缓存（Redis优先，marriage miss则引擎降级）
+    from app.services.engine import get_engine as _get_engine
     for aid in bound_ids:
-        if aid in accounts:
-            for key in ("marriage", "farm", "gang", "gang-boss"):
-                try:
-                    cached = await cache_get(f"qpet:{aid}:{key}")
-                    if cached:
-                        accounts[aid][key] = json.loads(cached)
-                except Exception:
-                    pass
+        if aid not in accounts:
+            continue
+        for key in ("marriage", "farm", "gang", "gang-boss"):
+            try:
+                cached = await cache_get(f"qpet:{aid}:{key}")
+                if cached:
+                    accounts[aid][key] = json.loads(cached)
+                elif key == "marriage":
+                    engine = _get_engine(aid)
+                    if engine and engine._running:
+                        accounts[aid][key] = await engine._get_marriage_info()
+            except Exception:
+                pass
 
     return {"success": True, "data": accounts}
