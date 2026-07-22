@@ -2,8 +2,11 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.core.auth_middleware import get_current_user
 from app.routers import auth, config, accounts, logs, preload, auction, tampermonkey
 
 logger = logging.getLogger("qpet.main")
@@ -124,6 +127,91 @@ async def get_version():
     from datetime import datetime
     return {"version": f"v5.0-{datetime.now().strftime('%Y%m%d%H%M')}"}
 
+
+# ——— Admin 用户管理 CRUD ———
+
+@app.get("/api/users")
+async def list_users(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    from sqlalchemy import select
+    from app.models.user import User
+    r = await db.execute(select(User).order_by(User.id))
+    rows = r.scalars().all()
+    return {"success": True, "data": [{"id": u.id, "username": u.username, "role": u.role,
+            "phone": u.phone, "email": u.email, "created_at": str(u.created_at) if u.created_at else None} for u in rows]}
+
+@app.post("/api/users")
+async def create_user(req: dict, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.core.security import hash_password
+    u = User(username=req["username"], password_hash=hash_password(req.get("password", "")), role=req.get("role", "user"))
+    db.add(u)
+    await db.commit()
+    return {"success": True, "data": {"id": u.id}}
+
+@app.put("/api/users/{user_id}")
+async def update_user(user_id: int, req: dict, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    from app.models.user import User
+    from app.core.security import hash_password
+    u = await db.get(User, user_id)
+    if not u:
+        return {"success": False, "message": "用户不存在"}
+    if "username" in req: u.username = req["username"]
+    if "role" in req: u.role = req["role"]
+    if "password" in req and req["password"]: u.password_hash = hash_password(req["password"])
+    await db.commit()
+    return {"success": True}
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    from app.models.user import User
+    u = await db.get(User, user_id)
+    if not u:
+        return {"success": False, "message": "用户不存在"}
+    await db.delete(u)
+    await db.commit()
+    return {"success": True}
+
+@app.get("/api/shutdown")
+async def api_shutdown(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    from app.services.scheduler import shutdown
+    shutdown()
+    return {"success": True, "message": "关停信号已发送"}
+
+@app.post("/api/admin/auction-ingest")
+async def auction_ingest(req: dict, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    data = req.get("data", "")
+    import json
+    from app.models.auction_snapshot import AuctionSnapshot
+    from datetime import datetime, timezone
+    from sqlalchemy.dialects.postgresql import insert
+    try: items = json.loads(data) if isinstance(data, str) else data
+    except Exception: return {"success": False, "message": "JSON解析失败"}
+    if not isinstance(items, list): items = [items]
+    now = datetime.now(timezone.utc)
+    rows = [{"snapshot_at": now, "item_id": str(i.get("item_id","")), "name": i.get("name",""), "slot": i.get("slot",""), "quality": i.get("quality",""), "item_level": i.get("item_level",0), "price": i.get("price",0), "seller_name": i.get("seller_name",""), "enhance_level": i.get("enhance_level",0), "raw_data": json.dumps(i, ensure_ascii=False)} for i in items]
+    stmt = insert(AuctionSnapshot).values(rows)
+    await db.execute(stmt)
+    await db.commit()
+    return {"success": True, "message": f"已注入 {len(rows)} 条"}
+
+@app.post("/api/webhook")
+async def webhook(req: dict, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403)
+    return {"success": True, "message": "Webhook 已触发"}
 
 @app.get("/api/status")
 async def get_status():
