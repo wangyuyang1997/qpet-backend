@@ -1,4 +1,5 @@
-"""魂珠合成 — VIP一键合成，降级为手动merge"""
+"""魂珠合成 — 逐类型读 mergeRules，够数量就合，对齐旧 engine.js:1535-1563"""
+import asyncio
 import logging
 from app.services.qpet_client import QPetClient
 from app.services.item_supply import ItemSupply
@@ -15,31 +16,40 @@ class Upgrade:
         self._account_id = account_id
 
     async def run(self, is_premium: bool = False) -> dict:
-        """返回 {auto_merged, manual_merged}"""
-        results = {"auto_merged": False, "manual_merged": False}
-
         beads = await self._client.get_bead_inventory()
         if not beads.get("success"):
             warn("乐斗", "魂珠", "获取魂珠背包API失败", self._account_id)
-            return results
+            return {"merged": 0}
 
         data = beads.get("data", {})
+        inv = data.get("inventory", {})
+        if not inv:
+            return {"merged": 0}
 
-        if is_premium:
-            result = await self._client.auto_merge_beads("all", 8)
-            if result.get("success"):
-                results["auto_merged"] = True
-                info("乐斗", "魂珠", "魂珠一键合成成功", self._account_id)
-                return results
-            warn("乐斗", "魂珠", "魂珠一键合成失败，回退手动", self._account_id)
+        types = data.get("beadTypes") or list(inv.keys())
+        rules = data.get("mergeRules", {})
+        if not rules:
+            warn("乐斗", "魂珠", "魂珠API无mergeRules，跳过合成", self._account_id)
+            return {"merged": 0}
 
-        # 手动逐级合成
-        for level in range(1, 8):
-            result = await self._client.merge_beads("all", level + 1)
-            if result.get("success"):
-                results["manual_merged"] = True
+        merged = 0
+        for bead_type in types:
+            counts = inv.get(bead_type, {})
+            for tgt_str in sorted(rules.keys(), key=lambda x: int(x)):
+                tgt = int(tgt_str)
+                rule = rules[tgt_str]
+                from_lv = rule.get("from", 0)
+                needed = rule.get("needed", 3)
 
-        if results["manual_merged"]:
-            info("乐斗", "魂珠", "魂珠手动合成成功", self._account_id)
+                if (counts.get(from_lv, 0) or 0) >= needed:
+                    r = await self._client.auto_merge_beads(bead_type, tgt)
+                    if not r.get("success"):
+                        r = await self._client.merge_beads(bead_type, tgt)
+                    if r.get("success"):
+                        merged += 1
+                        info("乐斗", "魂珠", f"合成: {bead_type} Lv{from_lv}→{tgt}", self._account_id)
+                        await asyncio.sleep(0.3)
 
-        return results
+        if merged:
+            info("乐斗", "魂珠", f"魂珠合成完成: {merged}次", self._account_id)
+        return {"merged": merged}

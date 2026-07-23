@@ -346,6 +346,7 @@ class GameEngine:
         await self.exp_boost.ensure()  # 经验药水，用完才补
         await self.supply.ensure("revive", 0)
         await self.supply.ensure("challenge_book", 0)
+        await self.supply.supply_all("beads")  # 魂珠全量移入仓库
 
         await self.checkin.run()
         await self.chest.run()

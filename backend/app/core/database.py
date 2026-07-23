@@ -1,43 +1,24 @@
-"""PostgreSQL 异步连接 — 池大小自动适配 PG max_connections"""
+"""PostgreSQL 异步连接池 — 8引擎长连接 + 短连接余量"""
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.config import settings
 
 _log = logging.getLogger("qpet.db")
 
-# --reload 产生双进程（reloader + worker），各自独立建池。
-# 自动按 PG 上限计算安全池大小：2 进程 × 池上限 < PG max_connections。
-def _safe_pool(pg_max: int) -> tuple[int, int]:
-    budget = max(1, pg_max - int(pg_max * 0.2))  # 留20%给脚本和管理连接
-    per_process = budget // 2
-    size = max(4, per_process * 3 // 4)
-    overflow = per_process - size
-    return size, overflow
-
-try:
-    import psycopg2
-    conn = psycopg2.connect(
-        host=settings.pg_host, port=settings.pg_port,
-        user=settings.pg_user, password=settings.pg_password,
-        database=settings.pg_database, connect_timeout=5,
-    )
-    conn.autocommit = True
-    cur = conn.cursor()
-    cur.execute("SHOW max_connections")
-    pg_max = int(cur.fetchone()[0])
-    cur.close(); conn.close()
-except Exception:
-    pg_max = 50  # 已在服务器设为50，保守回退
-
-pool_size, max_overflow = _safe_pool(pg_max)
+# 8 个引擎各持 1 个长连接(self.db)，每周期 FarmSync/GangSync 临时借 1-2 个。
+# pool=10 保证 8 长连接 + 2 短连接余量，overflow=3 应对瞬时峰值。
+# pool_recycle=1800 让长连接每 30 分钟被动回收，防止 stale transaction 堆积。
+POOL_SIZE = 10
+MAX_OVERFLOW = 3
+POOL_RECYCLE_S = 1800
 
 engine = create_async_engine(settings.database_url,
-    pool_size=pool_size, max_overflow=max_overflow,
+    pool_size=POOL_SIZE, max_overflow=MAX_OVERFLOW,
+    pool_recycle=POOL_RECYCLE_S,
     pool_pre_ping=True, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-_log.info(f"PG max_connections={pg_max} → pool={pool_size}+{max_overflow} "
-          f"(安全于 {'reloader' if pg_max >= 32 else '单进程'}模式)")
+_log.info(f"PG pool={POOL_SIZE}+{MAX_OVERFLOW} recycle={POOL_RECYCLE_S}s")
 
 
 async def get_db():

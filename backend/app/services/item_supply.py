@@ -60,3 +60,38 @@ class ItemSupply:
 
         self._last_fail[item_key] = time.monotonic()
         return False
+
+    async def supply_all(self, item_key: str) -> int:
+        """把背包里所有匹配道具一次性移入仓库，返回成功数量。
+        用于魂珠等需要全量转移的道具类型。"""
+        rule = SUPPLY_CONFIG.get(item_key)
+        if not rule:
+            return 0
+
+        enabled = await self._config.get_bool(self._account_id, rule["config_key"])
+        if not enabled:
+            return 0
+
+        # 统一刷新背包缓存
+        items = await self._inventory.refresh()
+        moved = 0
+        for item in items:
+            qty = item.get("quantity", 0)
+            if qty <= 0:
+                continue
+            item_name = item.get("item_name", "") or item.get("name", "") or item.get("itemName", "")
+            item_type = item.get("item_type") or item.get("type") or item.get("itemType", "")
+            # 按名称匹配；对于 bead 类型同时匹配 item_type，覆盖"XX·碎片"等不带"魂珠"的命名
+            name_match = rule["name"] in item_name
+            type_match = (item_key == "beads" and item_type == "bead")
+            if not name_match and not type_match:
+                continue
+            item_id = item.get("item_id") or item.get("id") or item.get("itemId", "")
+            result = await self._inventory.use_item(item_type, item_id, qty)
+            if result and result.get("success"):
+                moved += qty
+                info("乐斗", "补给", f"补给 {item_name} x{qty} 成功", self._account_id)
+            else:
+                self._last_fail[item_key] = time.monotonic()
+
+        return moved

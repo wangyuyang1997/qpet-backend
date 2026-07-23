@@ -63,12 +63,16 @@ class ConfigService:
             )
         )
         row = result.scalar_one_or_none()
-        if row:
-            row.value = value
-        else:
-            row = AccountConfig(account_id=account_id, config_key=key, value=value)
-            self.db.add(row)
-        await self.db.commit()
+        try:
+            if row:
+                row.value = value
+            else:
+                row = AccountConfig(account_id=account_id, config_key=key, value=value)
+                self.db.add(row)
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return True
 
     async def get_value(self, account_id: str, key: str) -> str | None:

@@ -135,10 +135,14 @@ class AccountManager:
                 self.client.delete_key()
                 self.client._ready = False
                 # 持久化
-                acc = await self.db.get(Account, self.id)
-                if acc:
-                    acc.token = new_token
-                    await self.db.commit()
+                try:
+                    acc = await self.db.get(Account, self.id)
+                    if acc:
+                        acc.token = new_token
+                        await self.db.commit()
+                except Exception:
+                    try: await self.db.rollback()
+                    except Exception: pass
                 return True
 
         return False

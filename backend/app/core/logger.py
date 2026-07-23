@@ -29,7 +29,8 @@ def _get_engine():
     if _sync_engine is None:
         from sqlalchemy import create_engine
         _sync_engine = create_engine(settings.database_url_sync,
-                                     pool_size=2, max_overflow=0, pool_timeout=10)
+                                     pool_size=2, max_overflow=0, pool_timeout=10,
+                                     pool_recycle=1800)
     return _sync_engine
 
 

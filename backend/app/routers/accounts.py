@@ -625,8 +625,50 @@ async def trigger_action(account_id: str, action: str, _user: dict = Depends(get
         await engine._run_battle()
     elif action == "farm":
         await engine._run_farm()
+    elif action == "farm_own":
+        await engine._run_farm_own()
+    elif action == "farm_social":
+        await engine._run_farm_social()
     elif action == "checkin":
         await engine.checkin.run()
+    elif action == "chest":
+        await engine.chest.run()
+    elif action == "tower":
+        await engine.tower.run()
+    elif action == "supply":
+        await engine.exp_boost.ensure()
+        await engine.supply.ensure("revive", 0)
+        await engine.supply.ensure("challenge_book", 0)
+        await engine.supply.supply_all("beads")
+    elif action == "upgrade":
+        await engine.upgrade.run(engine._character_cache.get("isPremium", False))
+    elif action == "marriage":
+        await engine._run_marriage()
+    elif action == "gang_boss":
+        await engine.gang_boss.run()
+    elif action == "world_boss":
+        await engine.world_boss.run()
+    elif action == "tournament":
+        await engine.tournament.run(engine._character_cache.get("level", 0))
+    elif action == "class_upgrade":
+        await engine.class_upgrade.run(engine._character_cache.get("level", 0))
+    elif action == "ad":
+        await engine.ad_stamina.run(engine._character_cache.get("stamina", 0))
+        await engine.ad_farm.run()
+        await engine.ad_community.run()
+    elif action == "shop":
+        await engine.shop_special.run()
+        await engine.shop_stamina.run(engine._character_cache.get("experience", 0))
+    elif action == "friend_sync":
+        await engine.friend_sync.run()
+    elif action == "gang":
+        await engine.gang.run()
+    elif action == "persist":
+        await engine._persist_daily()
+    elif action == "sync_inventory":
+        await engine._sync_inventory_to_db()
+    elif action == "warm_cache":
+        await engine._warm_api_caches()
     else:
         return {"success": False, "message": f"未知操作: {action}"}
 

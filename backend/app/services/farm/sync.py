@@ -76,19 +76,23 @@ class FarmSync:
             ))
 
         async with self._sf() as db:
-            for r in rows:
-                stmt = pg_insert(PlayerMuseum).values(**r).on_conflict_do_update(
-                    constraint="player_museum_account_id_item_id_key",
-                    set_=dict(
-                        fragment_count=r["fragment_count"],
-                        status=r["status"],
-                        is_repaired=r["is_repaired"],
-                        repaired_at=r["repaired_at"],
-                        updated_at=r["updated_at"],
-                    ),
-                )
-                await db.execute(stmt)
-            await db.commit()
+            try:
+                for r in rows:
+                    stmt = pg_insert(PlayerMuseum).values(**r).on_conflict_do_update(
+                        constraint="player_museum_account_id_item_id_key",
+                        set_=dict(
+                            fragment_count=r["fragment_count"],
+                            status=r["status"],
+                            is_repaired=r["is_repaired"],
+                            repaired_at=r["repaired_at"],
+                            updated_at=r["updated_at"],
+                        ),
+                    )
+                    await db.execute(stmt)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
         logger.info(f"[{account_id}] 博物馆进度同步完成，{len(rows)}条")
         return len(rows)
@@ -120,16 +124,20 @@ class FarmSync:
             ))
 
         async with self._sf() as db:
-            for r in rows:
-                stmt = pg_insert(PlayerCollection).values(**r).on_conflict_do_update(
-                    constraint="player_collection_account_id_crop_id_quality_key",
-                    set_=dict(
-                        is_collected=True,
-                        updated_at=r["updated_at"],
-                    ),
-                )
-                await db.execute(stmt)
-            await db.commit()
+            try:
+                for r in rows:
+                    stmt = pg_insert(PlayerCollection).values(**r).on_conflict_do_update(
+                        constraint="player_collection_account_id_crop_id_quality_key",
+                        set_=dict(
+                            is_collected=True,
+                            updated_at=r["updated_at"],
+                        ),
+                    )
+                    await db.execute(stmt)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
         logger.info(f"[{account_id}] 图鉴收集进度同步完成，{len(rows)}条")
         return len(rows)
@@ -170,24 +178,28 @@ class FarmSync:
         )
 
         async with self._sf() as db:
-            stmt = pg_insert(FarmLand).values(**row).on_conflict_do_update(
-                constraint="farm_land_account_id_key",
-                set_=dict(
-                    land_level=row["land_level"],
-                    land_name=row["land_name"],
-                    research_points=row["research_points"],
-                    next_level=row["next_level"],
-                    next_name=row["next_name"],
-                    next_rp_needed=row["next_rp_needed"],
-                    next_artifacts=row["next_artifacts"],
-                    next_growth_pct=row["next_growth_pct"],
-                    next_harvest_pct=row["next_harvest_pct"],
-                    can_upgrade=row["can_upgrade"],
-                    updated_at=row["updated_at"],
-                ),
-            )
-            await db.execute(stmt)
-            await db.commit()
+            try:
+                stmt = pg_insert(FarmLand).values(**row).on_conflict_do_update(
+                    constraint="farm_land_account_id_key",
+                    set_=dict(
+                        land_level=row["land_level"],
+                        land_name=row["land_name"],
+                        research_points=row["research_points"],
+                        next_level=row["next_level"],
+                        next_name=row["next_name"],
+                        next_rp_needed=row["next_rp_needed"],
+                        next_artifacts=row["next_artifacts"],
+                        next_growth_pct=row["next_growth_pct"],
+                        next_harvest_pct=row["next_harvest_pct"],
+                        can_upgrade=row["can_upgrade"],
+                        updated_at=row["updated_at"],
+                    ),
+                )
+                await db.execute(stmt)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
         logger.info(f"[{account_id}] 土地等级同步: Lv.{row['land_level']} {row['land_name']}")
         return True
@@ -200,22 +212,26 @@ class FarmSync:
             return 0
 
         async with self._sf() as db:
-            from sqlalchemy import delete as sql_delete
-            from app.models.player_inventory import PlayerInventory
-            await db.execute(
-                sql_delete(PlayerInventory).where(PlayerInventory.account_id == account_id)
-            )
-            for it in items:
-                db.add(PlayerInventory(
-                    account_id=account_id,
-                    item_id=it.get("id", 0),
-                    item_name=it.get("item_name", ""),
-                    item_type=it.get("item_type", ""),
-                    game_item_id=it.get("item_id", ""),
-                    quantity=it.get("quantity", 1),
-                    updated_at=datetime.now(timezone.utc),
-                ))
-            await db.commit()
+            try:
+                from sqlalchemy import delete as sql_delete
+                from app.models.player_inventory import PlayerInventory
+                await db.execute(
+                    sql_delete(PlayerInventory).where(PlayerInventory.account_id == account_id)
+                )
+                for it in items:
+                    db.add(PlayerInventory(
+                        account_id=account_id,
+                        item_id=it.get("id", 0),
+                        item_name=it.get("item_name", ""),
+                        item_type=it.get("item_type", ""),
+                        game_item_id=it.get("item_id", ""),
+                        quantity=it.get("quantity", 1),
+                        updated_at=datetime.now(timezone.utc),
+                    ))
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
         logger.info(f"[{account_id}] 背包同步完成: {len(items)}件")
         return len(items)
