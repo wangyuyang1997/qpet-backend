@@ -36,6 +36,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[ai] AI服务初始化失败: {e}")
 
+    # 启动时清空连接池，防止上次运行残留的脏事务污染本次会话
+    try:
+        from app.core.database import engine as _db_engine
+        await _db_engine.dispose()
+        logger.info("[db] 连接池已重建")
+    except Exception as e:
+        logger.warning(f"[db] 连接池重建失败: {e}")
+
     # 恢复 running=1 的引擎
     try:
         from app.core.database import AsyncSessionLocal

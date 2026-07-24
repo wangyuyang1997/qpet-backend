@@ -206,7 +206,7 @@ class AccountManager:
 async def list_accounts(db: AsyncSession) -> list[dict]:
     """返回所有账号摘要（供 Dashboard API 使用）"""
     from app.services.engine import _engines
-    result = await db.execute(select(Account))
+    result = await db.execute(select(Account).order_by(Account.sort_order, Account.id))
     rows = result.scalars().all()
     accounts = []
     for row in rows:
@@ -216,6 +216,7 @@ async def list_accounts(db: AsyncSession) -> list[dict]:
             "name": row.nickname or row.id[:8],
             "level": row.level,
             "class_name": row.class_name,
+            "sort_order": row.sort_order,
             "running": bool(row.running),
             "user_id": row.user_id,
             "has_credentials": bool(row.username and row.password),

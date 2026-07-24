@@ -203,6 +203,7 @@ async def get_gang_status_db(account_id: str, _user: dict = Depends(get_current_
             "level": gang.level if gang else 1,
             "notice": gang.notice if gang else "",
             "accumulated_contribution": gang.accumulated_contribution if gang else 0,
+            "contribution": gang.contribution if gang else 0,
             "guardian_level": gang.guardian_level if gang else 0,
             "member_count": gang.member_count if gang else 0,
             "next_level": gang.next_level if gang else 0,
@@ -609,6 +610,20 @@ async def refresh_marriage(account_id: str, _user: dict = Depends(get_current_us
     except Exception:
         pass
     return {"success": True, "data": info}
+
+
+@router.put("/reorder")
+async def reorder_accounts(req: dict, db: AsyncSession = Depends(get_db), _user: dict = Depends(get_current_user)):
+    """批量更新账号排序: {orders: [{id, sort_order}, ...]}"""
+    orders = req.get("orders", [])
+    if not orders:
+        return {"success": False, "message": "orders is required"}
+    for item in orders:
+        acc = await db.get(Account, item["id"])
+        if acc:
+            acc.sort_order = item["sort_order"]
+    await db.commit()
+    return {"success": True, "message": f"已更新 {len(orders)} 个账号排序"}
 
 
 @router.post("/{account_id}/{action}")

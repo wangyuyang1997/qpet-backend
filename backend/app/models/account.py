@@ -12,6 +12,7 @@ class Account(Base):
     nickname: Mapped[str] = mapped_column(String(64), default="")
     level: Mapped[int] = mapped_column(Integer, default=0)
     class_name: Mapped[str] = mapped_column(String(32), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
     token: Mapped[str] = mapped_column(Text, default="")
     running: Mapped[int] = mapped_column(Integer, default=0)
     automation: Mapped[dict] = mapped_column(JSONB, default=dict)

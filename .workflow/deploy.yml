@@ -1,0 +1,42 @@
+# Gitee Go 流水线 — qpet-backend
+# Push v5.0-dev 分支 → 构建镜像 → 推送 Gitee Registry → 部署云服
+name: Build & Deploy Backend
+on:
+  push:
+    branches: [v5.0-dev]
+  workflow_dispatch:
+
+env:
+  REGISTRY: registry.gitee.com
+  IMAGE: wongOld/qpet-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: checkout@v1
+
+      - name: Docker Build
+        run: |
+          cd backend
+          docker build -t $REGISTRY/$IMAGE:$GITEE_SHA .
+          docker tag $REGISTRY/$IMAGE:$GITEE_SHA $REGISTRY/$IMAGE:latest
+
+      - name: Docker Push
+        run: |
+          docker login -u $GITEE_USERNAME -p $GITEE_PASSWORD $REGISTRY
+          docker push $REGISTRY/$IMAGE:latest
+
+      - name: Deploy to Server
+        uses: ssh-exec@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          user: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /opt/qpet
+            docker compose pull backend
+            docker compose up -d backend
+            docker compose logs --tail=5 backend

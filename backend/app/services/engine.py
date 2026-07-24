@@ -219,6 +219,18 @@ class GameEngine:
         action("系统", "引擎", "自动挂机已启动", self.account_id)
         return True
 
+    async def _heal_db(self):
+        """若 self.db 的底层连接有脏事务，关闭并重建"""
+        try:
+            await self.db.rollback()
+        except Exception:
+            try:
+                await self.db.close()
+            except Exception:
+                pass
+            from app.core.database import AsyncSessionLocal
+            self.db = AsyncSessionLocal()
+
     async def stop(self):
         self._running = False
         _engines.pop(self.account_id, None)
@@ -239,6 +251,8 @@ class GameEngine:
 
     async def _init_sync(self):
         try:
+            await self._heal_db()
+
             char = await self.client.get_character()
             if char.get("success"):
                 self._character_cache = char.get("data", {})
@@ -754,6 +768,7 @@ class GameEngine:
                     await asyncio.sleep(30)
             except Exception as e:
                 log_error("系统", "引擎", f"战斗循环异常: {e}", self.account_id)
+                await self._heal_db()
                 await asyncio.sleep(10)
 
     async def _farm_loop(self):
@@ -767,8 +782,7 @@ class GameEngine:
                             await self._run_farm_social()
             except Exception as e:
                 log_error("系统", "引擎", f"农场循环异常: {e}", self.account_id)
-                try: await self.db.rollback()
-                except Exception: pass
+                await self._heal_db()
             await asyncio.sleep(60)
 
     async def _flower_loop(self):
@@ -786,6 +800,7 @@ class GameEngine:
                     self._marriage_partner_id = None
             except Exception as e:
                 log_error("系统", "引擎", f"送花循环异常: {e}", self.account_id)
+                await self._heal_db()
             await asyncio.sleep(300)
 
     async def _ad_poll_loop(self):
@@ -795,6 +810,7 @@ class GameEngine:
                 await self.ad_community.run()
             except Exception as e:
                 log_error("系统", "引擎", f"广告轮询异常: {e}", self.account_id)
+                await self._heal_db()
             await asyncio.sleep(600)
 
     # ——— 子模块编排 ———

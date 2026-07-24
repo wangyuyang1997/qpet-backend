@@ -12,6 +12,7 @@ class GangStatus(Base):
     level: Mapped[int] = mapped_column(Integer, default=1)
     notice: Mapped[str] = mapped_column(Text, default="")
     accumulated_contribution: Mapped[int] = mapped_column(Integer, default=0)
+    contribution: Mapped[int] = mapped_column(Integer, default=0)  # 当前可用的帮派共享贡献
     guardian_level: Mapped[int] = mapped_column(Integer, default=0)
     member_count: Mapped[int] = mapped_column(Integer, default=0)
     next_level: Mapped[int] = mapped_column(Integer, default=0)

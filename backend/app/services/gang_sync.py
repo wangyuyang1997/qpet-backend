@@ -37,6 +37,7 @@ class GangSync:
             level=info.get("level", 1),
             notice=info.get("notice", ""),
             accumulated_contribution=info.get("accumulated_contribution", 0),
+            contribution=info.get("total_contribution", 0),
             guardian_level=info.get("guardian_level", 0),
             member_count=len(data.get("members", [])),
             next_level=nxt.get("level", 0),
