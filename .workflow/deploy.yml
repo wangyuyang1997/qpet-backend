@@ -1,33 +1,30 @@
-# Gitee Go 流水线 — qpet-backend
-# Push v5.0-dev 分支 → 构建镜像 → 推送 Gitee Registry → SSH 部署云服
 displayName: Build & Deploy Backend
-
 on:
   push:
-    branches: [v5.0-dev]
+    branches:
+      - v5.0-dev
 
 stages:
-  - build
-  - deploy
+  - stage: build
+    name: Docker Build
+    steps:
+      - step: script
+        name: docker_build
+        params:
+          image: docker:latest
+          commands:
+            - cd backend
+            - docker build -t registry.gitee.com/wongOld/qpet-backend:latest .
+            - docker login -u $(DOCKER_USER) -p $(DOCKER_TOKEN) registry.gitee.com
+            - docker push registry.gitee.com/wongOld/qpet-backend:latest
 
-build:
-  stage: build
-  image: docker:latest
-  env:
-    REGISTRY: registry.gitee.com
-    IMAGE: wongOld/qpet-backend
-  script:
-    - cd backend
-    - docker build -t $REGISTRY/$IMAGE:latest .
-    - docker login -u $(DOCKER_USER) -p $(DOCKER_TOKEN) $REGISTRY
-    - docker push $REGISTRY/$IMAGE:latest
-
-deploy:
-  stage: deploy
-  image: alpine:latest
-  before_script:
-    - apk add --no-cache openssh-client sshpass
-  script:
-    - sshpass -p $(SSH_PASSWORD) ssh -o StrictHostKeyChecking=no $(SSH_USER)@$(SSH_HOST) -p $(SSH_PORT) "cd /opt/qpet && docker compose pull backend && docker compose up -d backend && docker compose logs --tail=5 backend"
-  dependencies:
-    - build
+  - stage: deploy
+    name: Deploy to Server
+    steps:
+      - step: script
+        name: ssh_deploy
+        params:
+          image: alpine:latest
+          commands:
+            - apk add --no-cache openssh-client sshpass
+            - sshpass -p $(SSH_PASSWORD) ssh -o StrictHostKeyChecking=no $(SSH_USER)@$(SSH_HOST) -p $(SSH_PORT) "cd /opt/qpet && docker compose pull backend && docker compose up -d backend && docker compose logs --tail=5 backend"
