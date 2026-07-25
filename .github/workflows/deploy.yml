@@ -2,7 +2,7 @@ name: Build & Deploy Backend
 
 on:
   push:
-    branches: [v5.0-dev]
+    branches: [master]
 
 permissions:
   contents: read
