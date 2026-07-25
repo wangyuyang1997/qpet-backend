@@ -2,7 +2,7 @@ name: Deploy Backend
 
 on:
   push:
-    branches: [v5.0-dev]
+    branches: [master]
 
 jobs:
   deploy:
@@ -17,7 +17,7 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd /opt/qpet/qpet-backend
-            git pull origin v5.0-dev
+            git pull origin master
             cd /opt/qpet
             docker compose build backend
             docker compose up -d backend
