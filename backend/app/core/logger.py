@@ -36,8 +36,11 @@ def _get_engine():
             _logger.warning(f"日志连接池已重建 (累计失败{_engine_failures}次)")
         from sqlalchemy import create_engine
         _sync_engine = create_engine(settings.database_url_sync,
-                                     pool_size=2, max_overflow=1, pool_timeout=5,
-                                     pool_recycle=600, pool_pre_ping=True)
+                                     pool_size=2, max_overflow=1, pool_timeout=3,
+                                     pool_recycle=600, pool_pre_ping=True,
+                                     connect_args={"connect_timeout": 5,
+                                                    "options": "-c statement_timeout=10000"},
+                                     pool_reset_on_return="rollback")
         _engine_failures = 0
     return _sync_engine
 
@@ -45,26 +48,34 @@ def _get_engine():
 def _insert_log(level: str, category: str, module: str, message: str,
                 account: str, data: str | None = None) -> int | None:
     global _engine_failures
-    try:
-        eng = _get_engine()
-        with eng.connect() as c:
-            row = c.execute(
-                text("""INSERT INTO logs (timestamp, level, category, module, message, account, data)
-                        VALUES (:ts, :level, :cat, :mod, :msg, :acct, :data)
-                        RETURNING id"""),
-                {"ts": _now(), "level": level, "cat": category or "", "mod": module,
-                 "msg": message, "acct": account, "data": data or None},
-            )
-            c.commit()
-            result = row.fetchone()
-            _engine_failures = 0
-            return result[0] if result else None
-    except Exception as e:
-        _engine_failures += 1
-        if _engine_failures >= 3:
-            _sync_engine = None  # 触发下次重建
-        _logger.error(f"日志入库失败(#{_engine_failures}): {e}")
-        return None
+    _attempt_insert = lambda: _do_insert(level, category, module, message, account, data)
+    for attempt in range(2):
+        try:
+            result = _do_insert(level, category, module, message, account, data)
+            if result is not None:
+                _engine_failures = 0
+                return result
+        except Exception as e:
+            _engine_failures += 1
+            _logger.error(f"日志入库失败(#{_engine_failures}): {e}")
+            if _engine_failures >= 3:
+                _sync_engine = None
+    return None
+
+
+def _do_insert(level, category, module, message, account, data):
+    eng = _get_engine()
+    with eng.connect() as c:
+        row = c.execute(
+            text("""INSERT INTO logs (timestamp, level, category, module, message, account, data)
+                    VALUES (:ts, :level, :cat, :mod, :msg, :acct, :data)
+                    RETURNING id"""),
+            {"ts": _now(), "level": level, "cat": category or "", "mod": module,
+             "msg": message, "acct": account, "data": data or None},
+        )
+        c.commit()
+        result = row.fetchone()
+        return result[0] if result else None
 
 
 def _update_log_message(log_id: int, new_msg: str):
