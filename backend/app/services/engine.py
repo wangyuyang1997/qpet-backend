@@ -384,12 +384,16 @@ class GameEngine:
         await self.shop_stamina.run(exp)
 
         if level < 100:
-            await self.npc.fight_one()
-            await self.tower.run()
+            if await self.config.get_bool(self.account_id, "auto_npc_fight"):
+                await self.npc.fight_one()
+            if await self.config.get_bool(self.account_id, "auto_tower"):
+                await self.tower.run()
         else:
             action("系统", "引擎", f"角色Lv.{level}，跳过NPC/爬塔", self.account_id)
-        await self.gang_boss.run()
-        await self.world_boss.run()
+        if await self.config.get_bool(self.account_id, "auto_gang_boss"):
+            await self.gang_boss.run()
+        if await self.config.get_bool(self.account_id, "auto_world_boss"):
+            await self.world_boss.run()
 
         await self._run_marriage()
 
@@ -399,7 +403,8 @@ class GameEngine:
             await self.class_upgrade.run(level)
         await self.upgrade.run(is_premium)
 
-        await self.tournament.run(level)
+        if await self.config.get_bool(self.account_id, "auto_tournament"):
+            await self.tournament.run(level)
         await self._run_farm(is_premium)
 
         elapsed = time.time() - start_time
@@ -771,12 +776,15 @@ class GameEngine:
         while self._running:
             try:
                 if self._character_cache.get("level", 0) >= 100:
-                    await asyncio.sleep(60)  # 满级不刷NPC
+                    await asyncio.sleep(60)
                     continue
                 if not self._is_rate_limited():
+                    if not await self.config.get_bool(self.account_id, "auto_npc_fight"):
+                        await asyncio.sleep(60)
+                        continue
                     result = await self.npc.fight_one()
                     if result.get("no_stamina"):
-                        await asyncio.sleep(300)  # 体力不足，等5分钟
+                        await asyncio.sleep(300)
                     else:
                         await asyncio.sleep(3 if result.get("ok") else 10)
                 else:
