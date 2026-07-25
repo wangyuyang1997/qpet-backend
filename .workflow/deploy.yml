@@ -1,5 +1,6 @@
 # Gitee Go 流水线 — qpet-backend
 # Push v5.0-dev 分支 → 构建镜像 → 推送 Gitee Registry → 部署云服
+displayName: Build & Deploy Backend
 name: Build & Deploy Backend
 on:
   push:
