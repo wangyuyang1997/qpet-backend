@@ -4,6 +4,10 @@ on:
   push:
     branches: [v5.0-dev]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
