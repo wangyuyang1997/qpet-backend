@@ -8,8 +8,8 @@ stages:
   - stage: build
     name: Docker Build
     steps:
-      - name: docker_build
-        type: script
+      - step: script
+        name: docker_build
         params:
           image: docker:latest
           commands:
@@ -21,8 +21,8 @@ stages:
   - stage: deploy
     name: Deploy to Server
     steps:
-      - name: ssh_deploy
-        type: script
+      - step: script
+        name: ssh_deploy
         params:
           image: alpine:latest
           commands:
