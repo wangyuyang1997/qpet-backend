@@ -1,30 +1,14 @@
-name: Build & Deploy Backend
+name: Deploy Backend
 
 on:
   push:
     branches: [v5.0-dev]
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build & Push Backend
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        run: |
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u wangyuyang1997 --password-stdin
-          IMAGE=ghcr.io/${{ github.repository }}:latest
-          cd backend
-          docker build -t $IMAGE .
-          docker push $IMAGE
-
-      - name: Deploy to Server
+      - name: Deploy
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -32,7 +16,9 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT }}
           script: |
+            cd /opt/qpet/qpet-backend
+            git pull origin v5.0-dev
             cd /opt/qpet
-            docker compose pull backend
+            docker compose build backend
             docker compose up -d backend
             docker compose logs --tail=5 backend
