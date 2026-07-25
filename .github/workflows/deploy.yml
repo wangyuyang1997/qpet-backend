@@ -5,7 +5,7 @@ on:
     branches: [master]
 
 jobs:
-  deploy:
+  pull:
     runs-on: ubuntu-latest
     steps:
       - name: 拉取最新代码
@@ -21,6 +21,10 @@ jobs:
               git pull origin master && break || sleep 5
             done
 
+  build:
+    needs: pull
+    runs-on: ubuntu-latest
+    steps:
       - name: 构建 Docker 镜像
         uses: appleboy/ssh-action@v1
         with:
@@ -32,6 +36,10 @@ jobs:
             cd /opt/qpet
             docker compose build backend
 
+  restart:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
       - name: 重启服务
         uses: appleboy/ssh-action@v1
         with:
@@ -43,6 +51,10 @@ jobs:
             cd /opt/qpet
             docker compose up -d backend
 
+  logs:
+    needs: restart
+    runs-on: ubuntu-latest
+    steps:
       - name: 查看启动日志
         uses: appleboy/ssh-action@v1
         with:
