@@ -148,39 +148,21 @@ def log(level: str, category: str, module: str, message: str,
             if _fold_cache[k]["first_ts"] < cutoff:
                 del _fold_cache[k]
 
-    # 写 DB：有事件循环时放执行器线程，入库完成后再注册折叠缓存+广播
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        # 同步上下文（启动/关闭/迁移脚本），保持内联
-        log_id = _insert_log(level, category, module, message, account, data)
-        if log_id:
-            _fold_cache[fold_key] = {"id": log_id, "count": 1, "first_ts": now}
-        return
-
-    event = {
-        "type": "log_insert", "id": None,
-        "timestamp": _now(), "level": level,
-        "category": category or "", "module": module,
-        "message": message, "data": data, "account": account,
-    }
-    fut = loop.run_in_executor(None, _insert_log, level, category, module, message, account, data)
-
-    def _after_insert(f: asyncio.Future):
-        log_id = f.result()
-        if not log_id:
-            return
+    # 同步写 DB（statement_timeout=10s + pool_pre_ping 保证不会卡死事件循环）
+    log_id = _insert_log(level, category, module, message, account, data)
+    if log_id:
         _fold_cache[fold_key] = {"id": log_id, "count": 1, "first_ts": now}
-        event["id"] = log_id
+        event = {
+            "type": "log_insert", "id": log_id,
+            "timestamp": _now(), "level": level,
+            "category": category or "", "module": module,
+            "message": message, "data": data, "account": account,
+        }
         try:
+            loop = asyncio.get_running_loop()
             loop.create_task(_broadcast(event))
         except RuntimeError:
             pass
-
-    fut.add_done_callback(_after_insert)
 
 
 def _event_loop():
