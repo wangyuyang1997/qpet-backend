@@ -13,6 +13,7 @@ RUN python -m venv /opt/venv && \
         "uvicorn[standard]>=0.32.0" \
         "sqlalchemy[asyncio]>=2.0.0" \
         "asyncpg>=0.30.0" \
+        "psycopg2-binary>=2.9.0" \
         "alembic>=1.14.0" \
         "apscheduler>=3.10.0" \
         "redis>=5.2.0" \
@@ -47,4 +48,4 @@ USER qpet
 EXPOSE 3456
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -sf http://localhost:3456/api/version || exit 1
 
-ENTRYPOINT ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3456"]
+ENTRYPOINT ["sh", "-c", "alembic stamp head && exec uvicorn app.main:app --host 0.0.0.0 --port 3456"]
