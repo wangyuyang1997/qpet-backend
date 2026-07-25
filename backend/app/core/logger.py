@@ -19,23 +19,32 @@ def _now() -> str:
 # 用同步 engine 避免事件循环 task 丢失
 # PG max_connections=20，日志写池必须小：pool 2 + 专用2线程执行器，与异步池(8)共存
 _sync_engine = None
+_engine_failures = 0
 
 from concurrent.futures import ThreadPoolExecutor
 _log_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qpet-log")
 
 
 def _get_engine():
-    global _sync_engine
-    if _sync_engine is None:
+    global _sync_engine, _engine_failures
+    if _sync_engine is None or _engine_failures >= 3:
+        if _sync_engine is not None:
+            try:
+                _sync_engine.dispose()
+            except Exception:
+                pass
+            _logger.warning(f"日志连接池已重建 (累计失败{_engine_failures}次)")
         from sqlalchemy import create_engine
         _sync_engine = create_engine(settings.database_url_sync,
-                                     pool_size=2, max_overflow=0, pool_timeout=10,
-                                     pool_recycle=1800)
+                                     pool_size=2, max_overflow=1, pool_timeout=5,
+                                     pool_recycle=600, pool_pre_ping=True)
+        _engine_failures = 0
     return _sync_engine
 
 
 def _insert_log(level: str, category: str, module: str, message: str,
                 account: str, data: str | None = None) -> int | None:
+    global _engine_failures
     try:
         eng = _get_engine()
         with eng.connect() as c:
@@ -48,13 +57,18 @@ def _insert_log(level: str, category: str, module: str, message: str,
             )
             c.commit()
             result = row.fetchone()
+            _engine_failures = 0
             return result[0] if result else None
     except Exception as e:
-        _logger.error(f"日志入库失败: {e}")
+        _engine_failures += 1
+        if _engine_failures >= 3:
+            _sync_engine = None  # 触发下次重建
+        _logger.error(f"日志入库失败(#{_engine_failures}): {e}")
         return None
 
 
 def _update_log_message(log_id: int, new_msg: str):
+    global _engine_failures
     try:
         eng = _get_engine()
         with eng.connect() as c:
@@ -63,8 +77,11 @@ def _update_log_message(log_id: int, new_msg: str):
                 {"msg": new_msg, "id": log_id},
             )
             c.commit()
+        _engine_failures = 0
     except Exception:
-        pass
+        _engine_failures += 1
+        if _engine_failures >= 3:
+            _sync_engine = None
 
 
 async def _broadcast(event: dict):
@@ -223,8 +240,12 @@ def migrate_logs_to_history():
             purged = result2.rowcount
 
             c.commit()
+            _engine_failures = 0
 
             if migrated or purged:
                 _logger.info(f"日志日切完成: 迁移{migrated}条, 清理{purged}条(7天前)")
     except Exception as e:
+        _engine_failures += 1
+        if _engine_failures >= 3:
+            _sync_engine = None
         _logger.error(f"日志日切失败: {e}")
