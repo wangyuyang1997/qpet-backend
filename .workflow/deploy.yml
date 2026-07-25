@@ -1,4 +1,31 @@
-# Gitee Go 流水线 — qpet-backend
+displayName: Build & Deploy Backend
+
+on:
+  push:
+      branches: [v5.0-dev]
+      
+      stages:
+        - stage: build
+            displayName: Docker Build
+                steps:
+                      - step: shell
+                              name: docker_build
+                                      image: docker:latest
+                                              commands:
+                                                        - cd backend
+                                                                  - docker build -t registry.gitee.com/wongOld/qpet-backend:latest .
+                                                                            - docker login -u $(DOCKER_USER) -p $(DOCKER_TOKEN) registry.gitee.com
+                                                                                      - docker push registry.gitee.com/wongOld/qpet-backend:latest
+                                                                                      
+                                                                                        - stage: deploy
+                                                                                            displayName: Deploy to Server
+                                                                                                steps:
+                                                                                                      - step: shell
+                                                                                                              name: ssh_deploy
+                                                                                                                      image: alpine:latest
+                                                                                                                              commands:
+                                                                                                                                        - apk add --no-cache openssh-client sshpass
+                                                                                                                                                  - sshpass -p $(SSH_PASSWORD) ssh -o StrictHostKeyChecking=no $(SSH_USER)@$(SSH_HOST) -p $(SSH_PORT) "cd /opt/qpet && docker compose pull backend && docker compose up -d backend && docker compose logs --tail=5 backend"# Gitee Go 流水线 — qpet-backend
 # Push v5.0-dev 分支 → 构建镜像 → 推送 Gitee Registry → SSH 部署云服
 displayName: Build & Deploy Backend
 
