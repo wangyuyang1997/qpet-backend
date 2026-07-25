@@ -125,6 +125,7 @@ class GameEngine:
         self._marriage_partner_id: str | None = None  # 已婚=伴侣ID, 未婚=要追求的目标ID
         self._farm_cycle_index = 0
         self._abyss_tickets = 0
+        self._flowers_sent = 0
         # 风控检测 对齐旧引擎 checkRateLimited / setFarmRateLimit
         self._rate_limit_hits = 0
         self._rate_limit_until = 0.0
@@ -219,8 +220,15 @@ class GameEngine:
         action("系统", "引擎", "自动挂机已启动", self.account_id)
         return True
 
+    async def _resolve_partner_user_id(self, account_id: str) -> int | None:
+        """将内部账号ID解析为游戏 user_id。送花API需要游戏数字ID，不能传内部hash。"""
+        from sqlalchemy import select
+        from app.models.account import Account
+        r = await self.db.execute(select(Account.user_id).where(Account.id == account_id))
+        return r.scalar_one_or_none()
+
     async def _heal_db(self):
-        """若 self.db 的底层连接有脏事务，关闭并重建"""
+        """若 self.db 的底层连接有脏事务，关闭并重建，并同步更新所有依赖服务的 db 引用"""
         try:
             await self.db.rollback()
         except Exception:
@@ -230,6 +238,10 @@ class GameEngine:
                 pass
             from app.core.database import AsyncSessionLocal
             self.db = AsyncSessionLocal()
+        # 关键: 始终同步 config 的 db 引用。即使 engine.db rollback 成功，
+        # config.db 仍可能指向之前某次 heal 遗留的旧 session（8s2b 根因）
+        if hasattr(self, "config") and self.config:
+            self.config.db = self.db
 
     async def stop(self):
         self._running = False
@@ -603,6 +615,8 @@ class GameEngine:
                     self.shop_special.today_count = max(getattr(self.shop_special, "today_count", 0), row.challenge_books)
                 if hasattr(self, '_abyss_tickets') and row.abyss_tickets:
                     self._abyss_tickets = max(self._abyss_tickets or 0, row.abyss_tickets)
+                if hasattr(self, '_flowers_sent') and row.flowers_sent:
+                    self._flowers_sent = max(self._flowers_sent, row.flowers_sent)
         except Exception:
             pass
 
@@ -640,6 +654,7 @@ class GameEngine:
             "gang_boss_fights": getattr(self.gang_boss, "today_fights", 0),
             "gang_challenge_books": getattr(self.gang_boss, "challenge_books", 0),
             "tower_revive": getattr(self, "_tower_revive", 0),
+            "flowers_sent": self._flowers_sent,
             "flowers_remaining": getattr(self.shop_special, "flower_stock", 0),
             "abyss_tickets": self._abyss_tickets,
             "plants": getattr(self.farm_plant, "_planted", 0) if self.farm_plant else 0,
@@ -791,10 +806,22 @@ class GameEngine:
                 status = await self.marriage_status.get()
                 married = status.get("married", False)
                 if not married and self._marriage_partner_id:
-                    intimacy = status.get("intimacy", 0)
-                    if intimacy < 100:
-                        await self.supply.ensure("flowers", 0)
-                        await self.marriage_flowers.run(self._marriage_partner_id, intimacy)
+                    partner_user_id = await self._resolve_partner_user_id(self._marriage_partner_id)
+                    if not partner_user_id:
+                        warn("系统", "引擎", f"无法解析伴侣游戏ID: {self._marriage_partner_id}", self.account_id)
+                    else:
+                        im = await self.client.get_friend_intimacy()
+                        intimacy = 0; sent_today = 0
+                        if im.get("success") and im.get("data"):
+                            im_data = im.get("data", {})
+                            im_map = (im_data.get("intimacyMap") or {})
+                            sent_map = (im_data.get("todaySentMap") or {})
+                            intimacy = im_map.get(str(partner_user_id), 0)
+                            sent_today = sent_map.get(str(partner_user_id), 0)
+                        if intimacy < 100:
+                            await self.supply.ensure("flowers", 0)
+                            result = await self.marriage_flowers.run(partner_user_id, intimacy, sent_today)
+                            self._flowers_sent += result.get("sent", 0)
                 elif married and self._marriage_partner_id:
                     warn("系统", "引擎", "已婚但_marrige_partner_id未清! 跳过好友送花", self.account_id)
                     self._marriage_partner_id = None
@@ -889,6 +916,20 @@ class GameEngine:
                             info["target_partner_name"] = name
                     except Exception:
                         pass
+            # 未婚时从 friend/intimacy API 拿真实亲密度（marriage/status 返回 0）
+            if not info["married"] and info.get("target_partner_id"):
+                partner_user_id = await self._resolve_partner_user_id(info["target_partner_id"])
+                if partner_user_id:
+                    try:
+                        im = await self.client.get_friend_intimacy()
+                        if im.get("success") and im.get("data"):
+                            im_data = im.get("data", {})
+                            im_map = (im_data.get("intimacyMap") or {})
+                            sent_map = (im_data.get("todaySentMap") or {})
+                            info["intimacy"] = im_map.get(str(partner_user_id), 0)
+                            info["todayGiftSent"] = sent_map.get(str(partner_user_id), 0)
+                    except Exception:
+                        pass
         return info
 
     async def _run_marriage(self):
@@ -898,16 +939,29 @@ class GameEngine:
                 # 已婚时清除追求目标，防止任何路径误调好友送花
                 self._marriage_partner_id = None
                 await self.marriage_boss.run(status)
-                await self.marriage_gift.run(status)
+                gift_sent = await self.marriage_gift.run(status)
+                self._flowers_sent += gift_sent
             elif self._marriage_partner_id:
-                intimacy = status.get("intimacy", 0)
-                info("系统", "引擎", f"未婚, 当前亲密度:{intimacy}", self.account_id)
-                await self.supply.ensure("flowers", 0)
-                result = await self.marriage_flowers.run(self._marriage_partner_id, intimacy)
-                intimacy = result.get("intimacy", intimacy)
-                if intimacy >= 100:
-                    info("系统", "引擎", "亲密度已满, 尝试求婚", self.account_id)
-                    await self.marriage_proposal.run(status)
+                partner_user_id = await self._resolve_partner_user_id(self._marriage_partner_id)
+                if not partner_user_id:
+                    warn("系统", "引擎", f"无法解析伴侣游戏ID: {self._marriage_partner_id}", self.account_id)
+                else:
+                    im = await self.client.get_friend_intimacy()
+                    intimacy = 0; sent_today = 0
+                    if im.get("success") and im.get("data"):
+                        im_data = im.get("data", {})
+                        im_map = (im_data.get("intimacyMap") or {})
+                        sent_map = (im_data.get("todaySentMap") or {})
+                        intimacy = im_map.get(str(partner_user_id), 0)
+                        sent_today = sent_map.get(str(partner_user_id), 0)
+                    info("系统", "引擎", f"未婚, 当前亲密度:{intimacy} 已送:{sent_today}", self.account_id)
+                    await self.supply.ensure("flowers", 0)
+                    result = await self.marriage_flowers.run(partner_user_id, intimacy, sent_today)
+                    self._flowers_sent += result.get("sent", 0)
+                    intimacy = result.get("intimacy", intimacy)
+                    if intimacy >= 100:
+                        info("系统", "引擎", "亲密度已满, 尝试求婚", self.account_id)
+                        await self.marriage_proposal.run(status)
             else:
                 pass  # 无伴侣，正常跳过
         except Exception as e:
