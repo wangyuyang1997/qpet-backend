@@ -17,7 +17,9 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd /root/qpet-backend
-            git pull origin master
+            for i in 1 2 3; do
+              git pull origin master && break || sleep 5
+            done
 
       - name: 构建 Docker 镜像
         uses: appleboy/ssh-action@v1
