@@ -21,6 +21,7 @@ class FarmQuery:
                       mc.item_id, mc.name, mc.category, mc.rarity,
                       mc.fragments_needed, mc.description, mc.sort_order,
                       COALESCE(pm.fragment_count, 0) AS fragment_count,
+                      COALESCE(pm.tradeable_fragments, 0) AS tradeable_fragments,
                       pm.status, COALESCE(pm.is_repaired, false) AS is_repaired,
                       pm.repaired_at
                     FROM museum_catalog mc
@@ -38,8 +39,8 @@ class FarmQuery:
             item = {
                 "item_id": r[0], "name": r[1], "category": r[2], "rarity": r[3],
                 "fragments_needed": r[4], "description": r[5],
-                "fragment_count": r[7], "status": r[8] or "见",
-                "is_repaired": r[9],
+                "fragment_count": r[7], "tradeable_fragments": r[8],
+                "status": r[9] or "见", "is_repaired": r[10],
             }
             items.append(item)
             cat = r[2]
