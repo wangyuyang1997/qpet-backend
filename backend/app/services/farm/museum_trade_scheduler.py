@@ -679,13 +679,15 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 db.add(trade)
                 count += 1
 
-            # 清理幽灵交易：游戏API不再返回的pending交易 → rejected
+            # 清理外部导入的幽灵交易：游戏API不再返回、非MT-XXXX的pending交易 → rejected
+            # （MT-XXXX格式的是我们创建的，生命周期由我们管理，不清理）
             api_game_ids = {t.get("id") for t in trades_raw if t.get("id")}
             if api_game_ids:
                 stale = await db.execute(
                     select(MuseumTrade).where(
                         MuseumTrade.game_trade_id.isnot(None),
                         MuseumTrade.status == "pending",
+                        ~MuseumTrade.unique_code.like("MT-%"),
                         ~MuseumTrade.game_trade_id.in_(api_game_ids),
                         (MuseumTrade.initiator_id == account_id) |
                         (MuseumTrade.target_id == account_id),
@@ -694,7 +696,7 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 for s in stale.scalars().all():
                     s.status = "rejected"
                     count += 1
-                    logger.info(f"[{account_id}] 同步清理幽灵交易 #{s.id} game_id={s.game_trade_id}")
+                    logger.info(f"[{account_id}] 同步清理外部导入幽灵交易 #{s.id} game_id={s.game_trade_id}")
 
             if count:
                 await db.commit()
