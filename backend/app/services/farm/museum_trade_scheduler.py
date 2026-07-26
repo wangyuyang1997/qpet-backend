@@ -92,13 +92,13 @@ async def _check_game_trade_status(engine, today: date) -> bool:
             return False
 
     try:
-        result = await engine.client.get_museum_trade_wishes()
+        result = await engine.client.get_museum_trades()
     except Exception as e:
         logger.warning(f"[{engine.account_id}] 查交易状态 API 异常，保守跳过: {e}")
         return True  # 网络异常时保守跳过，避免重复交易
 
     if not result.get("success"):
-        logger.warning(f"[{engine.account_id}] get_museum_trade_wishes 失败: {result.get('message')}")
+        logger.warning(f"[{engine.account_id}] get_museum_trades 失败: {result.get('message')}")
         return False
 
     data = result.get("data", {})
@@ -571,38 +571,25 @@ async def sync_museum_trades(account_id: str, engine) -> int:
         return 0
 
     try:
-        result = await temp_client.get_museum_trade_wishes()
+        result = await temp_client.get_museum_trades()
     except Exception as e:
         logger.error(f"[{account_id}] 获取交易订单失败: {e}")
         return 0
 
     if not result.get("success"):
-        logger.warning(f"[{account_id}] get_museum_trade_wishes 返回失败: {result.get('message')}")
+        logger.warning(f"[{account_id}] get_museum_trades 返回失败: {result.get('message')}")
         return 0
 
     data = result.get("data", {})
     incoming = data.get("incoming", [])
     outgoing = data.get("outgoing", [])
     completed_today = data.get("completedToday", 0) or 0
-    logger.info(f"[{account_id}] get_museum_trade_wishes: incoming={len(incoming)} outgoing={len(outgoing)} completedToday={completed_today}")
+    logger.info(f"[{account_id}] get_museum_trades: incoming={len(incoming)} outgoing={len(outgoing)} completedToday={completed_today}")
 
     # 判断今日是否已交易
     from datetime import date, datetime
     today = date.today()
     has_traded_today = completed_today > 0 or _has_accepted_trade_today(incoming + outgoing, today)
-
-    # 如果还看不出来，再查 GET /farm/museum-trades 的 match.reason
-    if not has_traded_today:
-        try:
-            trades_resp = await temp_client.get_museum_trades()
-            if trades_resp.get("success"):
-                for friend_trade in trades_resp.get("data", {}).get("friends", []):
-                    reason = (friend_trade.get("match") or {}).get("reason", "")
-                    if "今日" in reason and ("完成" in reason or "交易" in reason):
-                        has_traded_today = True
-                        break
-        except Exception:
-            pass
 
     if has_traded_today:
         await _set_traded(account_id, today)
