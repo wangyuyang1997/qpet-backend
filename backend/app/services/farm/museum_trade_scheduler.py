@@ -65,9 +65,9 @@ async def _process_account(account_id: str, engine, today: date):
                 return  # 每人每天只处理一次交易
         return
 
-    # === Step 3: 匹配发起 ===
-    api_surplus = await _get_tradable_from_api(engine)
-    await _match_and_create(account_id, engine, today, api_surplus)
+    # === Step 3: 匹配发起（读 DB，数据已在 Step 1.5 校准） ===
+    db_surplus, db_deficit = await _get_account_surplus_deficit(account_id)
+    await _match_and_create(account_id, engine, today, db_surplus)
 
 
 async def _get_today_digs(account_id: str, today: date) -> int:
@@ -115,31 +115,6 @@ async def _check_game_trade_status(engine, today: date) -> bool:
         return True
 
     return False
-
-
-async def _get_tradable_from_api(engine) -> dict[str, int]:
-    """通过游戏 API 获取当前真实可交易的盈余碎片（替代 DB tradeable_fragments）"""
-    if not engine.client or not getattr(engine.client, '_ready', False):
-        try:
-            await engine.client.ensure_ecdsa_ready()
-        except Exception:
-            return {}
-
-    try:
-        result = await engine.client.get_museum_trades()
-    except Exception as e:
-        logger.warning(f"[{engine.account_id}] get_museum_trades API 异常: {e}")
-        return {}
-
-    if not result.get("success"):
-        return {}
-
-    surplus = {}
-    for item in result.get("data", {}).get("tradableItems", []):
-        qty = item.get("tradableQuantity", 0)
-        if qty > 0:
-            surplus[item["id"]] = qty
-    return surplus
 
 
 async def _get_pending_incoming(account_id: str) -> list[MuseumTrade]:
@@ -360,17 +335,10 @@ async def _update_trade_status(trade_id: int, status: str):
             raise
 
 
-async def _match_and_create(account_id: str, engine, today: date, api_surplus: dict[str, int] = None):
-    """匹配并创建交易（surplus 优先用游戏API，deficit 用DB）"""
-    # 当前账号的 surplus：优先用游戏API真实数据
-    if api_surplus is not None:
-        surplus = api_surplus
-    else:
-        db_surplus, _ = await _get_account_surplus_deficit(account_id)
-        surplus = db_surplus
+async def _match_and_create(account_id: str, engine, today: date, surplus: dict[str, int] = None):
+    """匹配并创建交易（surplus/deficit 由调用方从DB传入，已在 sync 中校准）"""
     if not surplus:
         return
-    # deficit 仍然从 DB 获取（API 不提供）
     _, deficit = await _get_account_surplus_deficit(account_id)
 
     # 获取其他运行中账号的 surplus 和 deficit
