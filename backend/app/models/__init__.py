@@ -22,3 +22,4 @@ from .gang_skill import GangSkill
 from .gang_boss import GangBoss
 from .gang_member import GangMember
 from .chest_record import ChestRecord
+from .museum_trade import MuseumTrade

@@ -11,6 +11,7 @@ from app.services.engine import get_engine, get_or_create_engine
 from app.services.farm.query import FarmQuery
 from app.core.database import AsyncSessionLocal
 from app.models.account import Account
+from app.models.daily_record import DailyRecord
 from app.models.user import User, UserAccount
 import json
 
@@ -344,6 +345,94 @@ async def get_land_status(account_id: str, _user: dict = Depends(get_current_use
     return {"success": True, "data": data}
 
 
+@router.get("/{account_id}/museum-trades")
+async def get_museum_trades(account_id: str, _user: dict = Depends(get_current_user)):
+    """查博物馆交易记录联 daily_record 次数"""
+    from datetime import date
+    from sqlalchemy import select, desc
+    from app.models import MuseumTrade, Account as AccountModel, MuseumCatalog
+
+    today = date.today()
+
+    async with AsyncSessionLocal() as db:
+        # 交易记录
+        r = await db.execute(
+            select(MuseumTrade).where(
+                (MuseumTrade.initiator_id == account_id) |
+                (MuseumTrade.target_id == account_id)
+            )
+            .order_by(desc(MuseumTrade.updated_at))
+            .limit(100)
+        )
+        trades_raw = r.scalars().all()
+
+        # 构建响应
+        trades = []
+        for t in trades_raw:
+            is_initiator = t.initiator_id == account_id
+            counterparty_id = t.target_id if is_initiator else t.initiator_id
+
+            # 查对方昵称
+            cr = await db.execute(
+                select(AccountModel.nickname).where(AccountModel.id == counterparty_id)
+            )
+            cname = cr.scalar_one_or_none() or counterparty_id[:8]
+
+            # 查藏品名称
+            off_name = (await db.execute(
+                select(MuseumCatalog.name).where(MuseumCatalog.item_id == t.offer_item_id)
+            )).scalar_one_or_none() or t.offer_item_id
+            want_name = (await db.execute(
+                select(MuseumCatalog.name).where(MuseumCatalog.item_id == t.want_item_id)
+            )).scalar_one_or_none() or t.want_item_id
+
+            off_rarity = (await db.execute(
+                select(MuseumCatalog.rarity).where(MuseumCatalog.item_id == t.offer_item_id)
+            )).scalar_one_or_none() or ""
+            want_rarity = (await db.execute(
+                select(MuseumCatalog.rarity).where(MuseumCatalog.item_id == t.want_item_id)
+            )).scalar_one_or_none() or ""
+
+            trades.append({
+                "id": t.id,
+                "direction": "initiated" if is_initiator else "received",
+                "counterparty_name": cname,
+                "offer_item_id": t.offer_item_id,
+                "offer_item_name": off_name,
+                "offer_item_rarity": off_rarity,
+                "offer_quantity": t.offer_quantity,
+                "want_item_id": t.want_item_id,
+                "want_item_name": want_name,
+                "want_item_rarity": want_rarity,
+                "want_quantity": t.want_quantity,
+                "unique_code": t.unique_code,
+                "status": t.status,
+                "created_at": str(t.created_at) if t.created_at else "",
+                "updated_at": str(t.updated_at) if t.updated_at else "",
+            })
+
+        # 今日翻地数和交易数
+        dr = await db.execute(
+            select(DailyRecord).where(
+                DailyRecord.account_id == account_id,
+                DailyRecord.date == today,
+            )
+        )
+        daily = dr.scalar_one_or_none()
+        today_dig = daily.digs if daily else 0
+        today_trade = daily.museum_trades if daily else 0
+
+    return {
+        "success": True,
+        "data": {
+            "trades": trades,
+            "today_dig_count": today_dig,
+            "today_trade_count": today_trade,
+            "can_trade": today_dig >= 50 and today_trade == 0,
+        },
+    }
+
+
 @router.post("/{account_id}/sync-farm")
 async def sync_farm_data(account_id: str, _user: dict = Depends(get_current_user)):
     """手动触发农场数据同步：调游戏API获取最新museum/collection/land，写入DB"""
@@ -489,6 +578,18 @@ async def sync_gang_data(account_id: str, _user: dict = Depends(get_current_user
         "message": f"帮派同步完成: {result['gang']} {result['skills']}技能 {result['bosses']}BOSS {member_count}成员",
         "data": result,
     }
+
+
+@router.post("/{account_id}/sync-museum-trades")
+async def sync_museum_trades(account_id: str, _user: dict = Depends(get_current_user)):
+    """手动触发博物馆交易订单同步：从游戏API拉取已有交易写入museum_trade表"""
+    engine = get_engine(account_id)
+    if not engine or not engine._running:
+        return {"success": False, "message": "引擎未运行"}
+
+    from app.services.farm.museum_trade_scheduler import sync_museum_trades as _do_sync
+    count = await _do_sync(account_id, engine)
+    return {"success": True, "message": f"同步完成，新增 {count} 条", "data": {"synced": count}}
 
 
 @router.put("/{account_id}/credentials")

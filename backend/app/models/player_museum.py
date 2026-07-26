@@ -12,6 +12,7 @@ class PlayerMuseum(Base):
     account_id: Mapped[str] = mapped_column(String(64), nullable=False)
     item_id: Mapped[str] = mapped_column(String(32), nullable=False)
     fragment_count: Mapped[int] = mapped_column(Integer, default=0)
+    tradeable_fragments: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(4), default="见")
     is_repaired: Mapped[bool] = mapped_column(Boolean, default=False)
     repaired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

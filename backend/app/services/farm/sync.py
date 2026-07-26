@@ -63,12 +63,14 @@ class FarmSync:
             needed = RARITY_FRAGMENTS.get(rarity, 8)
             status = self._status_from_fragments(count, needed)
             repaired = count >= needed
+            tradeable = (count - needed) if repaired else 0
             repaired_at = datetime.now(timezone.utc) if repaired else None
 
             rows.append(dict(
                 account_id=account_id,
                 item_id=item_id,
                 fragment_count=count,
+                tradeable_fragments=tradeable,
                 status=status,
                 is_repaired=repaired,
                 repaired_at=repaired_at,
@@ -82,6 +84,7 @@ class FarmSync:
                         constraint="player_museum_account_id_item_id_key",
                         set_=dict(
                             fragment_count=r["fragment_count"],
+                            tradeable_fragments=r["tradeable_fragments"],
                             status=r["status"],
                             is_repaired=r["is_repaired"],
                             repaired_at=r["repaired_at"],

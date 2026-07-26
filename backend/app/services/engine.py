@@ -284,6 +284,18 @@ class GameEngine:
             profile = await self.client.get_profile()
             if profile.get("success"):
                 self._profile_cache = profile.get("data", {})
+                # 保存游戏用户 ID（来自 profile 数据）
+                puid = self._profile_cache.get("id") or self._profile_cache.get("userId") or 0
+                if puid and puid != self.mgr.user_id:
+                    self.mgr.user_id = puid
+                    await self.mgr._save_info()
+
+            # 同步博物馆已有交易订单
+            try:
+                from app.services.farm.museum_trade_scheduler import sync_museum_trades
+                await sync_museum_trades(self.account_id, self)
+            except Exception:
+                pass
 
             # 从 daily_records 恢复今日已完成状态，重启不丢
             await self._restore_daily_state()

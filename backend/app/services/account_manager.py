@@ -44,6 +44,7 @@ class AccountManager:
         self.premium_expires_at = None
         self.username = ""
         self.password_encrypted = ""
+        self.user_id = 0
 
     # ——— 初始化 / 启停 ———
 
@@ -63,6 +64,7 @@ class AccountManager:
         self.password_encrypted = row.password or ""
         self.is_premium = bool(row.is_premium)
         self.premium_expires_at = row.premium_expires_at
+        self.user_id = row.user_id or 0
 
         # 创建 API 客户端
         self.client = QPetClient(
@@ -134,11 +136,18 @@ class AccountManager:
                 self.client.token = new_token
                 self.client.delete_key()
                 self.client._ready = False
+
+                # 从登录响应提取游戏用户 ID
+                game_user_id = data.get("data", {}).get("user", {}).get("id", 0)
+                self.user_id = game_user_id or 0
+
                 # 持久化
                 try:
                     acc = await self.db.get(Account, self.id)
                     if acc:
                         acc.token = new_token
+                        if self.user_id:
+                            acc.user_id = self.user_id
                         await self.db.commit()
                 except Exception:
                     try: await self.db.rollback()
@@ -186,6 +195,7 @@ class AccountManager:
                 acc.nickname = self.nickname
                 acc.level = self.level
                 acc.class_name = self.class_name
+                acc.user_id = self.user_id or 0
                 await self.db.commit()
         except Exception as e:
             logger.error(f"[{self.id}] _save_info 失败: {e}")

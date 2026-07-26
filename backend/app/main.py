@@ -87,7 +87,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"启动日志日切失败: {e}")
 
+    # 博物馆交易 DDL 迁移（幂等，每次启动执行）
+    try:
+        from app.services.farm.migration import run_migration
+        await run_migration()
+        logger.info("[migration] museum trade DDL 完成")
+    except Exception as e:
+        logger.warning(f"[migration] museum trade DDL 失败: {e}")
+
+    # 启动博物馆交易调度器
+    try:
+        from app.services.farm.museum_trade_scheduler import start_museum_trade_scheduler
+        await start_museum_trade_scheduler()
+        logger.info("博物馆交易调度器已启动 (每10分钟)")
+    except Exception as e:
+        logger.warning(f"启动博物馆交易调度器失败: {e}")
+
     yield
+
+    try:
+        from app.services.farm.museum_trade_scheduler import stop_museum_trade_scheduler
+        await stop_museum_trade_scheduler()
+    except Exception:
+        pass
 
     try:
         from app.services.scheduler import shutdown as stop_scheduler

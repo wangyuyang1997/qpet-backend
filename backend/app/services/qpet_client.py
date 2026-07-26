@@ -323,6 +323,22 @@ class QPetClient:
     async def farm_get_steal_log(self, page: int = 1, limit: int = 30): return await self.api_call("GET", f"/farm/steal-log?page={page}&limit={limit}")
     async def farm_get_steal_rank(self, limit: int = 20): return await self.api_call("GET", f"/farm/steal-rank?limit={limit}")
 
+    # ——— Farm 博物馆交易 ———
+    async def get_museum_trade_wishes(self):
+        return await self.api_call("GET", "/farm/museum-trade-wishes")
+
+    async def get_museum_trades(self):
+        return await self.api_call("GET", "/farm/museum-trades")
+
+    async def create_museum_trade(self, friend_id: int, body: dict):
+        return await self.api_call("POST", f"/farm/friend/{friend_id}/museum-trades", body)
+
+    async def accept_museum_trade(self, trade_id: int):
+        return await self.api_call("POST", f"/farm/museum-trades/{trade_id}/accept")
+
+    async def reject_museum_trade(self, trade_id: int):
+        return await self.api_call("POST", f"/farm/museum-trades/{trade_id}/reject")
+
     # ——— Community API ———
     async def community_get_ad_status(self): return await self.api_call("GET", "/community/ad-reward/status")
     async def community_claim_ad(self): return await self.api_call("POST", "/community/ad-reward/claim")
