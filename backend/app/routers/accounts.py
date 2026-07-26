@@ -588,8 +588,13 @@ async def sync_museum_trades(account_id: str, _user: dict = Depends(get_current_
         return {"success": False, "message": "引擎未运行"}
 
     from app.services.farm.museum_trade_scheduler import sync_museum_trades as _do_sync
+    from app.services.farm.sync import FarmSync
+    from app.core.database import AsyncSessionLocal
     count = await _do_sync(account_id, engine)
-    return {"success": True, "message": f"同步完成，新增 {count} 条", "data": {"synced": count}}
+    # 同步后校准 tradeable_fragments
+    syncer = FarmSync(AsyncSessionLocal)
+    calib = await syncer.sync_tradeable_from_api(account_id, engine)
+    return {"success": True, "message": f"同步 {count} 条交易 + 校准 {calib} 项碎片", "data": {"synced": count, "calibrated": calib}}
 
 
 @router.put("/{account_id}/credentials")
