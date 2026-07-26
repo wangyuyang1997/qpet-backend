@@ -514,26 +514,15 @@ async def _save_trade(
 
 async def sync_museum_trades(account_id: str, engine) -> int:
     """启动时调用，从游戏API拉取该账号已有的交易订单并写入 museum_trade 表。
-    返回新增/更新的记录数。使用独立临时客户端，不影响引擎运行的客户端。
+    返回新增/更新的记录数。直接使用引擎客户端，不再创建临时客户端。
     """
-    # 用引擎客户端的 token 创建独立临时客户端
-    token = engine.client.token if engine.client else ""
-    if not token:
-        return 0
-
-    from app.services.qpet_client import QPetClient
-    temp_client = QPetClient(account_id=account_id, token=token)
-    try:
-        ok = await temp_client.init_ecdsa()
-        if not ok:
-            logger.warning(f"[{account_id}] 临时客户端 ECDSA 初始化失败")
-            return 0
-    except Exception as e:
-        logger.error(f"[{account_id}] 临时客户端 ECDSA 异常: {e}")
+    client = engine.client if engine else None
+    if not client or not getattr(client, '_ready', False):
+        logger.warning(f"[{account_id}] 引擎客户端未就绪，跳过交易同步")
         return 0
 
     try:
-        result = await temp_client.get_museum_trades()
+        result = await client.get_museum_trades()
     except Exception as e:
         logger.error(f"[{account_id}] 获取交易订单失败: {e}")
         return 0
