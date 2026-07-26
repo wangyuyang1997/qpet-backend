@@ -177,20 +177,34 @@ async def _accept_trade(trade: MuseumTrade, engine, today: date) -> bool:
         logger.warning(f"[{trade.target_id}] 目标引擎未运行，跳过接受")
         return False
 
-    if not target_engine.client or not getattr(target_engine.client, '_ready', False):
-        await target_engine.client.ensure_ecdsa_ready()
+    # 确保 ECDSA 有效（先删旧 key 再重新注册，避免失效）
+    if not getattr(target_engine.client, '_ready', False):
+        target_engine.client.delete_key()
+        await target_engine.client.init_ecdsa()
 
     user_id = target_engine.mgr.user_id if hasattr(target_engine.mgr, 'user_id') else 0
     if not user_id:
         logger.warning(f"[{trade.target_id}] 缺少游戏 user_id，跳过接受")
         return False
 
-    # 调游戏 API 接受
-    result = await target_engine.client.accept_museum_trade(trade.game_trade_id)
-    if not result.get("success"):
+    # 调游戏 API 接受（1次重试）
+    for attempt in range(2):
+        result = await target_engine.client.accept_museum_trade(trade.game_trade_id)
+        if result.get("success"):
+            break
         reason = result.get("message", "未知错误")
-        logger.warning(f"[{trade.target_id}] 接受交易 API 失败: {reason}")
-        await _update_trade_status(trade.id, "rejected")
+        if attempt == 0 and ("密钥" in reason or "认证" in reason or "401" in reason or "signature" in reason.lower()):
+            logger.warning(f"[{trade.target_id}] 接受失败(密钥问题)，重新注册后重试: {reason}")
+            target_engine.client.delete_key()
+            await target_engine.client.init_ecdsa()
+            continue
+        # 游戏明确说交易已完成/不存在 → 标记拒绝
+        if "已完成" in reason or "不存在" in reason or "已拒绝" in reason:
+            logger.warning(f"[{trade.target_id}] 交易 {trade.id} 游戏侧已失效: {reason}")
+            await _update_trade_status(trade.id, "rejected")
+            return False
+        # 其他错误（碎片不足、今日已交易等）→ 保留 pending 下次再试
+        logger.warning(f"[{trade.target_id}] 接受交易 API 失败(保留pending): {reason}")
         return False
 
     # 扣加双方碎片
@@ -664,6 +678,23 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 )
                 db.add(trade)
                 count += 1
+
+            # 清理幽灵交易：游戏API不再返回的pending交易 → rejected
+            api_game_ids = {t.get("id") for t in trades_raw if t.get("id")}
+            if api_game_ids:
+                stale = await db.execute(
+                    select(MuseumTrade).where(
+                        MuseumTrade.game_trade_id.isnot(None),
+                        MuseumTrade.status == "pending",
+                        ~MuseumTrade.game_trade_id.in_(api_game_ids),
+                        (MuseumTrade.initiator_id == account_id) |
+                        (MuseumTrade.target_id == account_id),
+                    )
+                )
+                for s in stale.scalars().all():
+                    s.status = "rejected"
+                    count += 1
+                    logger.info(f"[{account_id}] 同步清理幽灵交易 #{s.id} game_id={s.game_trade_id}")
 
             if count:
                 await db.commit()
