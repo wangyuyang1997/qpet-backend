@@ -674,6 +674,14 @@ async def sync_museum_trades(account_id: str, engine) -> int:
             await db.rollback()
             raise
 
+    # ——— 校准 tradeable_fragments ———
+    try:
+        from app.services.farm.sync import FarmSync
+        fs = FarmSync(AsyncSessionLocal)
+        await fs.sync_tradeable_from_api(account_id, engine)
+    except Exception as e:
+        logger.warning(f"[{account_id}] 校准 tradeable_fragments 失败: {e}")
+
     return count
 
 

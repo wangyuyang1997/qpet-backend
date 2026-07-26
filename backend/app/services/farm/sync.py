@@ -100,6 +100,44 @@ class FarmSync:
         logger.info(f"[{account_id}] 博物馆进度同步完成，{len(rows)}条")
         return len(rows)
 
+    # ——— museum tradeable calibration ———
+
+    async def sync_tradeable_from_api(self, account_id: str, engine) -> int:
+        """从游戏 API /farm/museum-trades 获取真实 tradableQuantity，校准 DB"""
+        if not engine or not engine.client:
+            return 0
+        try:
+            result = await engine.client.get_museum_trades()
+        except Exception:
+            return 0
+        if not result.get("success"):
+            return 0
+
+        updated = 0
+        for item in result.get("data", {}).get("tradableItems", []):
+            item_id = item.get("id")
+            qty = item.get("tradableQuantity", 0)
+            if not item_id:
+                continue
+
+            async with self._sf() as db:
+                try:
+                    from sqlalchemy import update as sql_update
+                    await db.execute(
+                        sql_update(PlayerMuseum)
+                        .where(PlayerMuseum.account_id == account_id, PlayerMuseum.item_id == item_id)
+                        .values(tradeable_fragments=qty, updated_at=datetime.now(timezone.utc))
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    continue
+            updated += 1
+
+        if updated:
+            logger.info(f"[{account_id}] 博物馆可交易碎片校准完成，{updated}项")
+        return updated
+
     # ——— collection ———
 
     async def _sync_collection(self, account_id: str, farm_data: dict) -> int:
