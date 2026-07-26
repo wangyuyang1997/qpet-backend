@@ -584,7 +584,7 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 if existing_row:
                     # 已存在：同步游戏状态变化（如取消/拒绝）
                     game_status = t.get("status", "pending")
-                    status_map = {"pending": "pending", "accepted": "accepted", "rejected": "rejected"}
+                    status_map = {"pending": "pending", "accepted": "accepted", "rejected": "rejected", "cancelled": "rejected", "expired": "rejected"}
                     new_status = status_map.get(game_status, "pending")
                     if existing_row.status != new_status:
                         existing_row.status = new_status
@@ -607,7 +607,7 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 target_id = receiver_aid or f"uid_{receiver_uid}"
 
                 game_status = t.get("status", "pending")
-                status_map = {"pending": "pending", "accepted": "accepted", "rejected": "rejected"}
+                status_map = {"pending": "pending", "accepted": "accepted", "rejected": "rejected", "cancelled": "rejected", "expired": "rejected"}
                 local_status = status_map.get(game_status, "pending")
 
                 trade = MuseumTrade(
