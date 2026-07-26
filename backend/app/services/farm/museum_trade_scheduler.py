@@ -620,7 +620,16 @@ async def sync_museum_trades(account_id: str, engine) -> int:
                 existing = await db.execute(
                     select(MuseumTrade).where(MuseumTrade.game_trade_id == game_id)
                 )
-                if existing.scalar_one_or_none():
+                existing_row = existing.scalar_one_or_none()
+                if existing_row:
+                    # 已存在：同步游戏状态变化（如取消/拒绝）
+                    game_status = t.get("status", "pending")
+                    status_map = {"pending": "pending", "accepted": "accepted", "rejected": "rejected"}
+                    new_status = status_map.get(game_status, "pending")
+                    if existing_row.status != new_status:
+                        existing_row.status = new_status
+                        count += 1
+                        logger.info(f"[{account_id}] 交易 {game_id} 状态变更: {existing_row.status}→{new_status}")
                     continue
 
                 # 映射 user_id → account_id
