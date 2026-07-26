@@ -151,8 +151,8 @@ async def _accept_trade(trade: MuseumTrade, engine, today: date) -> bool:
             target_engine.client.delete_key()
             await target_engine.client.init_ecdsa()
             continue
-        # 游戏明确说交易已完成/不存在 → 标记拒绝
-        if "已完成" in reason or "不存在" in reason or "已拒绝" in reason:
+        # 游戏明确说交易已完成/不存在/已取消/已拒绝 → 标记拒绝
+        if "已完成" in reason or "不存在" in reason or "已拒绝" in reason or "已取消" in reason:
             logger.warning(f"[{trade.target_id}] 交易 {trade.id} 游戏侧已失效: {reason}")
             await _update_trade_status(trade.id, "rejected")
             return False
