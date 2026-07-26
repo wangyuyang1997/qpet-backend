@@ -1,60 +1,11 @@
-# Q宠乐斗 v5.0 全家桶
+# Q宠乐斗 v5.0 全量编排
 # 部署路径: /opt/qpet/docker-compose.yml
+# PG/Redis/MQ 使用独立编排（root_default 网络），不在此 compose 内
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: qpet-postgres
-    environment:
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-      POSTGRES_DB: ${PG_DATABASE:-qpet_v5_dev}
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: qpet-redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - ./data/redis:/data
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: qpet-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-    volumes:
-      - ./data/rabbitmq:/var/lib/rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
-      context: ./backend
+      context: /root/qpet-backend/backend
       dockerfile: Dockerfile
     image: qpet-backend:latest
     container_name: qpet-backend
@@ -62,25 +13,24 @@ services:
       - .env
     volumes:
       - ./data/logs:/app/logs
-    ports:
-      - "3456:3456"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+    networks:
+      - root_default
     restart: unless-stopped
 
   frontend:
     build:
-      context: ../qpet-frontend
+      context: /root/qpet-frontend
       dockerfile: Dockerfile
     image: qpet-frontend:latest
     container_name: qpet-frontend
     ports:
-      - "80:80"
+      - 5174:80
+    networks:
+      - root_default
     depends_on:
       - backend
     restart: unless-stopped
+
+networks:
+  root_default:
+    external: true
