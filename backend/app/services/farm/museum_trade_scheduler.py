@@ -188,7 +188,9 @@ async def _accept_trade(trade: MuseumTrade, engine, today: date) -> bool:
     # 调游戏 API 接受
     result = await target_engine.client.accept_museum_trade(trade.game_trade_id)
     if not result.get("success"):
-        logger.warning(f"[{trade.target_id}] 接受交易 API 失败: {result.get('message')}")
+        reason = result.get("message", "未知错误")
+        logger.warning(f"[{trade.target_id}] 接受交易 API 失败: {reason}")
+        await _update_trade_status(trade.id, "rejected")
         return False
 
     # 扣加双方碎片
