@@ -583,13 +583,36 @@ async def sync_gang_data(account_id: str, _user: dict = Depends(get_current_user
 @router.post("/{account_id}/sync-museum-trades")
 async def sync_museum_trades(account_id: str, _user: dict = Depends(get_current_user)):
     """手动触发博物馆交易订单同步：从游戏API拉取已有交易写入museum_trade表"""
-    engine = get_engine(account_id)
-    if not engine or not engine._running:
-        return {"success": False, "message": "引擎未运行"}
-
     from app.services.farm.museum_trade_scheduler import sync_museum_trades as _do_sync
     from app.services.farm.sync import FarmSync
     from app.core.database import AsyncSessionLocal
+    from app.models.account import Account as AccountModel
+
+    engine = get_engine(account_id)
+    if not engine or not engine._running:
+        # 非运行账号：用 DB 中的 token 创建临时客户端做同步
+        async with AsyncSessionLocal() as db:
+            ar = await db.execute(select(AccountModel).where(AccountModel.id == account_id))
+            row = ar.scalar_one_or_none()
+        if not row or not row.token:
+            return {"success": False, "message": "引擎未运行且无 token"}
+        from app.services.qpet_client import QPetClient
+        temp = QPetClient(account_id=account_id, token=row.token)
+        try:
+            ok = await temp.init_ecdsa()
+            if not ok:
+                return {"success": False, "message": "ECDSA 初始化失败"}
+        except Exception:
+            return {"success": False, "message": "ECDSA 异常"}
+        # 模拟 engine 对象传给 sync 函数
+        class _FakeEngine:
+            client = temp
+            account_id = account_id
+        count = await _do_sync(account_id, _FakeEngine)
+        syncer = FarmSync(AsyncSessionLocal)
+        calib = await syncer.sync_tradeable_from_api(account_id, _FakeEngine)
+        return {"success": True, "message": f"离线同步 {count} 条交易 + 校准 {calib} 项碎片", "data": {"synced": count, "calibrated": calib}}
+
     count = await _do_sync(account_id, engine)
     # 同步后校准 tradeable_fragments
     syncer = FarmSync(AsyncSessionLocal)
