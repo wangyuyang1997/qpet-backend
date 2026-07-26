@@ -347,88 +347,74 @@ async def get_land_status(account_id: str, _user: dict = Depends(get_current_use
 
 @router.get("/{account_id}/museum-trades")
 async def get_museum_trades(account_id: str, _user: dict = Depends(get_current_user)):
-    """查博物馆交易记录联 daily_record 次数"""
-    from datetime import date
-    from sqlalchemy import select, desc
-    from app.models import MuseumTrade, Account as AccountModel, MuseumCatalog
+    """查博物馆交易记录 — 直接调用游戏API获取，不依赖本地museum_trade表"""
+    from app.models.account import Account as AccountModel
+    from app.services.qpet_client import QPetClient
 
-    today = date.today()
+    token = ""
+    engine = get_engine(account_id)
+    if engine and engine._running and engine.client:
+        token = engine.client.token
+    if not token:
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(AccountModel).where(AccountModel.id == account_id))
+            row = r.scalar_one_or_none()
+            if row:
+                token = row.token
+    if not token:
+        return {"success": False, "message": "账号无token", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
 
-    async with AsyncSessionLocal() as db:
-        # 交易记录
-        r = await db.execute(
-            select(MuseumTrade).where(
-                (MuseumTrade.initiator_id == account_id) |
-                (MuseumTrade.target_id == account_id)
-            )
-            .order_by(desc(MuseumTrade.updated_at))
-            .limit(100)
-        )
-        trades_raw = r.scalars().all()
+    client = QPetClient(account_id=account_id, token=token)
+    try:
+        if not await client.init_ecdsa():
+            return {"success": False, "message": "ECDSA初始化失败", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
+    except Exception:
+        return {"success": False, "message": "ECDSA异常", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
 
-        # 构建响应
-        trades = []
-        for t in trades_raw:
-            is_initiator = t.initiator_id == account_id
-            counterparty_id = t.target_id if is_initiator else t.initiator_id
+    result = await client.get_museum_trades()
+    if not result.get("success"):
+        return {"success": False, "message": result.get("message", "API失败"), "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
 
-            # 查对方昵称
-            cr = await db.execute(
-                select(AccountModel.nickname).where(AccountModel.id == counterparty_id)
-            )
-            cname = cr.scalar_one_or_none() or counterparty_id[:8]
+    data = result.get("data", {})
 
-            # 查藏品名称
-            off_name = (await db.execute(
-                select(MuseumCatalog.name).where(MuseumCatalog.item_id == t.offer_item_id)
-            )).scalar_one_or_none() or t.offer_item_id
-            want_name = (await db.execute(
-                select(MuseumCatalog.name).where(MuseumCatalog.item_id == t.want_item_id)
-            )).scalar_one_or_none() or t.want_item_id
+    def _fmt(t: dict, direction: str) -> dict:
+        offered = t.get("offeredItem", {})
+        requested = t.get("requestedItem", {})
+        return {
+            "game_trade_id": t.get("id"),
+            "direction": direction,
+            "initiator_name": t.get("senderName", ""),
+            "target_name": t.get("receiverName", ""),
+            "offer_item_id": offered.get("id", ""),
+            "offer_item_name": offered.get("name", ""),
+            "offer_item_rarity": offered.get("rarity", ""),
+            "offer_quantity": t.get("offeredQuantity", 0),
+            "want_item_id": requested.get("id", ""),
+            "want_item_name": requested.get("name", ""),
+            "want_item_rarity": requested.get("rarity", ""),
+            "want_quantity": t.get("requestedQuantity", 0),
+            "unique_code": t.get("note", ""),
+            "status": t.get("status", "pending"),
+            "created_at": t.get("createdAt", ""),
+            "accepted_at": t.get("acceptedAt", ""),
+            "expires_at": t.get("expiresAt", ""),
+        }
 
-            off_rarity = (await db.execute(
-                select(MuseumCatalog.rarity).where(MuseumCatalog.item_id == t.offer_item_id)
-            )).scalar_one_or_none() or ""
-            want_rarity = (await db.execute(
-                select(MuseumCatalog.rarity).where(MuseumCatalog.item_id == t.want_item_id)
-            )).scalar_one_or_none() or ""
+    trades = []
+    for t in data.get("incoming", []):
+        trades.append(_fmt(t, "received"))
+    for t in data.get("outgoing", []):
+        trades.append(_fmt(t, "initiated"))
 
-            trades.append({
-                "id": t.id,
-                "direction": "initiated" if is_initiator else "received",
-                "counterparty_name": cname,
-                "offer_item_id": t.offer_item_id,
-                "offer_item_name": off_name,
-                "offer_item_rarity": off_rarity,
-                "offer_quantity": t.offer_quantity,
-                "want_item_id": t.want_item_id,
-                "want_item_name": want_name,
-                "want_item_rarity": want_rarity,
-                "want_quantity": t.want_quantity,
-                "unique_code": t.unique_code,
-                "status": t.status,
-                "created_at": str(t.created_at) if t.created_at else "",
-                "updated_at": str(t.updated_at) if t.updated_at else "",
-            })
-
-        # 今日翻地数和交易数
-        dr = await db.execute(
-            select(DailyRecord).where(
-                DailyRecord.account_id == account_id,
-                DailyRecord.date == today,
-            )
-        )
-        daily = dr.scalar_one_or_none()
-        today_dig = daily.digs if daily else 0
-        today_trade = daily.museum_trades if daily else 0
+    completed_today = data.get("completedToday", 0) or 0
+    daily_limit = data.get("dailyLimit", 1)
 
     return {
         "success": True,
         "data": {
-            "trades": trades,
-            "today_dig_count": today_dig,
-            "today_trade_count": today_trade,
-            "can_trade": today_dig >= 50 and today_trade == 0,
+            "trades": sorted(trades, key=lambda x: x.get("created_at", ""), reverse=True),
+            "today_trade_count": completed_today,
+            "can_trade": completed_today < daily_limit,
         },
     }
 
