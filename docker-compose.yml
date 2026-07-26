@@ -53,7 +53,10 @@ services:
       retries: 5
 
   backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/wangyuyang1997/qpet-backend:latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: qpet-backend:latest
     container_name: qpet-backend
     env_file:
       - .env
@@ -71,7 +74,10 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/wangyuyang1997/qpet-frontend:latest}
+    build:
+      context: ../qpet-frontend
+      dockerfile: Dockerfile
+    image: qpet-frontend:latest
     container_name: qpet-frontend
     ports:
       - "80:80"
