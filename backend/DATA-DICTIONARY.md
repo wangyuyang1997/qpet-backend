@@ -1,6 +1,6 @@
 # Q宠乐斗 Backend 数据字典
 
-> 数据库: PostgreSQL (8.137.186.154)  
+> 数据库: PostgreSQL 36.151.150.252:5432 (京东云 Docker)  
 > ORM: SQLAlchemy 2.0 + Alembic  
 > 更新: 2026-07-14
 
