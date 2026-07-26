@@ -347,74 +347,100 @@ async def get_land_status(account_id: str, _user: dict = Depends(get_current_use
 
 @router.get("/{account_id}/museum-trades")
 async def get_museum_trades(account_id: str, _user: dict = Depends(get_current_user)):
-    """查博物馆交易记录 — 直接调用游戏API获取，不依赖本地museum_trade表"""
-    from app.models.account import Account as AccountModel
-    from app.services.qpet_client import QPetClient
+    """查博物馆交易记录 — 数据由 sync_museum_trades 从游戏API同步到museum_trade表"""
+    from datetime import date
+    from sqlalchemy import select as sa_select, desc
+    from app.models import MuseumTrade, Account as AccountModel, MuseumCatalog
 
-    token = ""
-    engine = get_engine(account_id)
-    if engine and engine._running and engine.client:
-        token = engine.client.token
-    if not token:
-        async with AsyncSessionLocal() as db:
-            r = await db.execute(select(AccountModel).where(AccountModel.id == account_id))
-            row = r.scalar_one_or_none()
-            if row:
-                token = row.token
-    if not token:
-        return {"success": False, "message": "账号无token", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
+    today = date.today()
 
-    client = QPetClient(account_id=account_id, token=token)
-    try:
-        if not await client.init_ecdsa():
-            return {"success": False, "message": "ECDSA初始化失败", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
-    except Exception:
-        return {"success": False, "message": "ECDSA异常", "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            sa_select(MuseumTrade).where(
+                (MuseumTrade.initiator_id == account_id) |
+                (MuseumTrade.target_id == account_id)
+            )
+            .order_by(desc(MuseumTrade.updated_at))
+            .limit(100)
+        )
+        trades_raw = r.scalars().all()
 
-    result = await client.get_museum_trades()
-    if not result.get("success"):
-        return {"success": False, "message": result.get("message", "API失败"), "data": {"trades": [], "today_trade_count": 0, "can_trade": False}}
+        def _lookup(items: list, item_id: str, default: str = ""):
+            for it in items:
+                if it.item_id == item_id:
+                    return it.name
+            return default
 
-    data = result.get("data", {})
+        # 批量查藏品名和对方昵称
+        cat_ids = set()
+        peer_ids = set()
+        for t in trades_raw:
+            cat_ids.update([t.offer_item_id, t.want_item_id])
+            peer_ids.add(t.target_id if t.initiator_id == account_id else t.initiator_id)
 
-    def _fmt(t: dict, direction: str) -> dict:
-        offered = t.get("offeredItem", {})
-        requested = t.get("requestedItem", {})
-        return {
-            "game_trade_id": t.get("id"),
-            "direction": direction,
-            "initiator_name": t.get("senderName", ""),
-            "target_name": t.get("receiverName", ""),
-            "offer_item_id": offered.get("id", ""),
-            "offer_item_name": offered.get("name", ""),
-            "offer_item_rarity": offered.get("rarity", ""),
-            "offer_quantity": t.get("offeredQuantity", 0),
-            "want_item_id": requested.get("id", ""),
-            "want_item_name": requested.get("name", ""),
-            "want_item_rarity": requested.get("rarity", ""),
-            "want_quantity": t.get("requestedQuantity", 0),
-            "unique_code": t.get("note", ""),
-            "status": t.get("status", "pending"),
-            "created_at": t.get("createdAt", ""),
-            "accepted_at": t.get("acceptedAt", ""),
-            "expires_at": t.get("expiresAt", ""),
-        }
+        cat_map = {}
+        if cat_ids:
+            cr = await db.execute(
+                sa_select(MuseumCatalog.item_id, MuseumCatalog.name, MuseumCatalog.rarity)
+                .where(MuseumCatalog.item_id.in_(cat_ids))
+            )
+            for row in cr.all():
+                cat_map[row[0]] = (row[1], row[2])
 
-    trades = []
-    for t in data.get("incoming", []):
-        trades.append(_fmt(t, "received"))
-    for t in data.get("outgoing", []):
-        trades.append(_fmt(t, "initiated"))
+        peer_map = {}
+        if peer_ids:
+            pr = await db.execute(
+                sa_select(AccountModel.id, AccountModel.nickname)
+                .where(AccountModel.id.in_(peer_ids))
+            )
+            for row in pr.all():
+                peer_map[row[0]] = row[1]
 
-    completed_today = data.get("completedToday", 0) or 0
-    daily_limit = data.get("dailyLimit", 1)
+        trades = []
+        for t in trades_raw:
+            is_initiator = t.initiator_id == account_id
+            cid = t.target_id if is_initiator else t.initiator_id
+            off_info = cat_map.get(t.offer_item_id, (t.offer_item_id, ""))
+            want_info = cat_map.get(t.want_item_id, (t.want_item_id, ""))
+            trades.append({
+                "id": t.id,
+                "game_trade_id": t.game_trade_id,
+                "direction": "initiated" if is_initiator else "received",
+                "initiator_name": peer_map.get(t.initiator_id, t.initiator_id[:8]),
+                "target_name": peer_map.get(t.target_id, t.target_id[:8]),
+                "counterparty_name": peer_map.get(cid, cid[:8]),
+                "offer_item_id": t.offer_item_id,
+                "offer_item_name": off_info[0],
+                "offer_item_rarity": off_info[1],
+                "offer_quantity": t.offer_quantity,
+                "want_item_id": t.want_item_id,
+                "want_item_name": want_info[0],
+                "want_item_rarity": want_info[1],
+                "want_quantity": t.want_quantity,
+                "unique_code": t.unique_code,
+                "status": t.status,
+                "created_at": str(t.updated_at) if t.updated_at else "",
+                "updated_at": str(t.updated_at) if t.updated_at else "",
+            })
+
+        # 今日翻地数和交易数
+        dr = await db.execute(
+            sa_select(DailyRecord).where(
+                DailyRecord.account_id == account_id,
+                DailyRecord.date == today,
+            )
+        )
+        daily = dr.scalar_one_or_none()
+        today_dig = daily.digs if daily else 0
+        today_trade = daily.museum_trades if daily else 0
 
     return {
         "success": True,
         "data": {
-            "trades": sorted(trades, key=lambda x: x.get("created_at", ""), reverse=True),
-            "today_trade_count": completed_today,
-            "can_trade": completed_today < daily_limit,
+            "trades": trades,
+            "today_dig_count": today_dig,
+            "today_trade_count": today_trade,
+            "can_trade": today_dig >= 50 and today_trade == 0,
         },
     }
 
