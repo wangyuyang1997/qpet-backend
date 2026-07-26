@@ -39,23 +39,22 @@ async def run_museum_trade_cycle():
 
 
 async def _process_account(account_id: str, engine, today: date):
-    """处理单个账号的三步流程"""
+    """处理单个账号的三步流程（全链基于DB，DB由API同步校准）"""
 
-    # === Step 1: 资格检查 ===
+    # === Step 1: 资格检查（翻地数） ===
     digs = await _get_today_digs(account_id, today)
     if digs < 50:
         return
 
-    # 从游戏 API 获取今日真实交易状态（不依赖本地 DB）
-    already_traded = await _check_game_trade_status(engine, today)
-    if already_traded:
-        await _set_traded(account_id, today)
-        return
-
-    # === Step 1.5: 同步交易订单 ===
+    # === Step 2: 同步交易订单 + 校准碎片 + 同步今日交易状态 ===
     await sync_museum_trades(account_id, engine)
 
-    # === Step 2: 处理待接受 ===
+    # === Step 3: 资格检查（今日交易状态，基于刚同步的DB） ===
+    traded = await _get_today_trade_count(account_id, today)
+    if traded >= 1:
+        return
+
+    # === Step 4: 处理待接受 ===
     pending = await _get_pending_incoming(account_id)
     if pending:
         for trade in pending:
@@ -65,7 +64,7 @@ async def _process_account(account_id: str, engine, today: date):
                 return  # 每人每天只处理一次交易
         return
 
-    # === Step 3: 匹配发起（读 DB，数据已在 Step 1.5 校准） ===
+    # === Step 5: 匹配发起（读 DB） ===
     db_surplus, db_deficit = await _get_account_surplus_deficit(account_id)
     await _match_and_create(account_id, engine, today, db_surplus)
 
@@ -83,38 +82,17 @@ async def _get_today_digs(account_id: str, today: date) -> int:
         return (row.digs or 0) if row else 0
 
 
-async def _check_game_trade_status(engine, today: date) -> bool:
-    """通过游戏 API 检查今日是否已完成交易（不再依赖本地 DB 标记）"""
-    if not engine.client or not getattr(engine.client, '_ready', False):
-        try:
-            await engine.client.ensure_ecdsa_ready()
-        except Exception:
-            return False
-
-    try:
-        result = await engine.client.get_museum_trades()
-    except Exception as e:
-        logger.warning(f"[{engine.account_id}] 查交易状态 API 异常，保守跳过: {e}")
-        return True  # 网络异常时保守跳过，避免重复交易
-
-    if not result.get("success"):
-        logger.warning(f"[{engine.account_id}] get_museum_trades 失败: {result.get('message')}")
-        return False
-
-    data = result.get("data", {})
-    completed = data.get("completedToday", 0) or 0
-    if completed > 0:
-        logger.info(f"[{engine.account_id}] 游戏API返回今日已完成 {completed} 笔交易")
-        return True
-
-    # 兜底：检查 incoming/outgoing 中是否有今日已接受的
-    incoming = data.get("incoming", [])
-    outgoing = data.get("outgoing", [])
-    if _has_accepted_trade_today(incoming + outgoing, today):
-        logger.info(f"[{engine.account_id}] 游戏API返回今日有已接受交易")
-        return True
-
-    return False
+async def _get_today_trade_count(account_id: str, today: date) -> int:
+    """查询今日已完成交易数（DB，由 sync 同步自游戏API）"""
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(DailyRecord).where(
+                DailyRecord.account_id == account_id,
+                DailyRecord.date == today,
+            )
+        )
+        row = r.scalar_one_or_none()
+        return (row.museum_trades or 0) if row else 0
 
 
 async def _get_pending_incoming(account_id: str) -> list[MuseumTrade]:
